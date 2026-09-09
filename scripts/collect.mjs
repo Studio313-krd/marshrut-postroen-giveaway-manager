@@ -10,7 +10,7 @@ const collector=new InstagramCollector(dir);const c=newContest({reelUrl:url});
 try {
   await collector.open(c,{headless});console.log(collector.status().message);
   if(!headless){console.log('Откройте комментарии в Chrome, затем нажмите Enter. Вход нужен только если его запросит Instagram.');await new Promise(resolve=>process.stdin.once('data',resolve));}
-  await collector.collect();let last=-1;
+  if(collector.status().status==='ready')await collector.collect();let last=-1;
   while(collector.status().status==='collecting'){const s=collector.status();if(s.count!==last){last=s.count;console.log(`${s.count} комментариев`);}await delay(1500);}
   const status=collector.status();console.log(status.message);
   if(status.count){const out=collector.export(c.id);out.reelUrl=c.reelUrl;out.source.count=out.comments.length;const file=resolve(arg('--out')||`data/comments-${new URL(url).pathname.split('/')[2]}.json`);writeFileSync(file,JSON.stringify(out,null,2));console.log(`Сохранено ${out.comments.length} комментариев: ${file}`);}

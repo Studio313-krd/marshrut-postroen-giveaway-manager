@@ -99,7 +99,7 @@ const server=http.createServer(async(req,res)=>{
         if(collector.job&&collector.job.contestId!==id&&!['closed','error','collected','paused','ready'].includes(collector.job.status))assert(false,'Уже идёт сбор другого конкурса.',409);
         if(collector.job?.contestId===id&&['opening','collecting'].includes(collector.job.status))return json(res,collector.status());
         if(collector.job)await collector.close();
-        collector.open(c,{headless:process.env.COLLECTOR_HEADLESS!=='false'}).then(async()=>{await collector.collect();await collector.loopPromise;const current=get(id);if(!current.snapshot&&collector.job?.contestId===id&&collector.job.comments.size){const imported=collector.export(id);importInto(current,imported.comments,imported.source);}}).catch(()=>{});
+        collector.open(c,{headless:process.env.COLLECTOR_HEADLESS!=='false'}).then(async()=>{if(collector.status()?.status==='ready')await collector.collect();await collector.loopPromise;const current=get(id);if(!current.snapshot&&collector.job?.contestId===id&&collector.job.comments.size){const imported=collector.export(id);importInto(current,imported.comments,imported.source);}}).catch(()=>{});
         return json(res,collector.status(),202);
       }
       if(action?.startsWith('collector/')&&req.method==='POST') {
