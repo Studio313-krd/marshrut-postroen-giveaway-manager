@@ -5,6 +5,7 @@ import { mkdtempSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { digest, permutation } from '../server/domain.js';
+import { commentsWorkbook } from '../server/excel.js';
 
 test('HTTP import → review → freeze → idempotent draw → audit, restart and CSRF protection',async t=>{
   const dir=mkdtempSync(resolve('data','test-api-'));const port=14310;const base=`http://127.0.0.1:${port}`;let output='';
@@ -17,7 +18,9 @@ test('HTTP import → review → freeze → idempotent draw → audit, restart a
   assert.equal((await req('/contests','POST',{name:'Denied'}, {'X-CSRF-Token':'wrong'})).status,403);
   assert.equal((await req('/contests','GET',undefined,{'Origin':'https://evil.example'})).status,403);
   let {data:c}=await req('/demo','POST',{});const path='/contests/'+c.id;
-  const bad=await req(path+'/import','POST',{content:'username,text\nalice,hi',format:'csv'});assert.equal(bad.status,200);assert.equal(bad.data.comments.length,1);
+  const source=await commentsWorkbook([{username:'alice',text:'hi'}]);
+  const bad=await req(path+'/import','POST',{base64:source.toString('base64'),filename:'source.xlsx'});assert.equal(bad.status,200);assert.equal(bad.data.comments.length,1);
+  assert.equal((await req('/collector')).status,404);assert.equal((await req(path+'/collect','POST',{})).status,404);
   assert.equal((await req(path+'/freeze','POST',{acknowledged:true})).status,400);
   const newDemo=await req('/demo','POST',{});c=newDemo.data;const p='/contests/'+c.id;
   assert.equal((await req(p+'/freeze','POST',{acknowledged:false})).status,400);

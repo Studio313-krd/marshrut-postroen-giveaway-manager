@@ -3,6 +3,7 @@ export function createPrompt(contest) {
 
 Рилс: ${contest.reelUrl}
 Аккаунт организатора: @${contest.owner}
+В исходном Excel: ${contest.comments.length} строк с комментариями, ${new Set(contest.comments.map(row=>row.username)).size} уникальных аккаунтов. Файл подготовлен сервисом из полной выгрузки, которую загрузил менеджер; полноту относительно Instagram сервис не проверяет.
 
 УСЛОВИЯ КОНКУРСА (правила организатора):
 ${contest.conditions}

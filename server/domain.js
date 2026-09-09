@@ -64,15 +64,15 @@ export function parseCSV(raw) {
   assert(headers.includes('username') && headers.includes('text'), 'CSV должен содержать столбцы username и text.');
   return rows.map(r => Object.fromEntries(headers.map((h,i) => [h, r[i] ?? ''])));
 }
-export function normalizeComments(input) {
+export function normalizeComments(input,options={}) {
   const rows = Array.isArray(input) ? input : input?.comments ?? input?.data;
   assert(Array.isArray(rows) && rows.length > 0, 'Файл не содержит комментариев. Нужен массив или объект с полем comments.');
   assert(rows.length <= 100000, 'Максимум 100 000 комментариев за один импорт.');
   const result = []; const ids = new Map();
   rows.forEach((r, i) => {
     const user = username(r.username ?? r.owner?.username ?? r.user?.username);
-    const text = String(r.text ?? '').trim();
-    assert(validUser(user) && text && text.length <= 10000, `Строка ${i+1}: проверьте username и text.`);
+    const text = options.preserveText?String(r.text??''):String(r.text ?? '').trim();
+    assert(validUser(user) && (options.allowEmptyText||text) && text.length <= 10000, `Строка ${i+1}: проверьте аккаунт и комментарий.`);
     const time = r.timestamp ?? r.created_at ?? '';
     const date = time === '' ? '' : new Date(typeof time === 'number' ? (time < 1e12 ? time*1000 : time) : time);
     assert(date === '' || !Number.isNaN(date.getTime()), `Строка ${i+1}: некорректная дата.`);
@@ -135,7 +135,7 @@ export function freeze(c) {
   assert(c.acknowledged, 'Подтвердите, что проверили полноту выгрузки и список участников.');
   assert(c.source?.completeness !== 'partial' || c.workflow==='external' && c.sourceAccepted===true, 'Подтвердите отдельно расхождение выгрузки со счётчиком Instagram.');
   if(c.workflow!=='external') assert(c.locations.length >= 3, 'Укажите минимум три локации в условиях.');
-  else assert(c.selection && c.selection.conditionsHash===digest(c.conditions), 'Загрузите Excel с участниками, проверенными по текущим условиям.');
+  else assert(c.selection && c.selection.conditionsHash===digest(c.conditions) && c.selection.sourceHash===digest(c.comments), 'Загрузите Excel с участниками, проверенными по текущим условиям и исходному файлу.');
   const { rows } = evaluate(c); const eligible = rows.filter(r=>r.eligible);
   assert(eligible.length >= totalPlaces(c), `Для розыгрыша нужно минимум ${totalPlaces(c)} отобранных аккаунтов.`);
   const payload = { contestId:c.id, name:c.name, reelUrl:c.reelUrl, owner:c.owner, demo:c.demo, at:new Date().toISOString(), locations:c.locations, duplicatePolicy:c.duplicatePolicy, source:c.source, comments:c.comments, participants:eligible, overrides:c.overrides, winnerCount:c.winnerCount??5,reserveCount:c.reserveCount??5,conditions:c.conditions||'',manualChecks:c.manualChecks||'',selection:c.selection||null,sourceAccepted:c.sourceAccepted===true };
@@ -172,7 +172,7 @@ export const totalPlaces = c => (c.snapshot?.payload.winnerCount??c.winnerCount?
 export function acceptSelection(c, rows, filename) {
   assert(!c.snapshot,'Список уже зафиксирован.',409);
   assert(c.conditions && c.prompt,'Сначала создайте промпт по условиям конкурса.');
-  const normalized=normalizeComments(rows),seen=new Set();
+  const normalized=normalizeComments(rows,{preserveText:true}),seen=new Set();
   const source=new Map(c.comments.map(x=>[JSON.stringify([x.username,x.text]),x]));
   c.selectedComments=normalized.map(row=>{
     assert(!seen.has(row.username),`Аккаунт @${row.username} повторяется в Excel. Оставьте одну строку для одного шанса.`);seen.add(row.username);

@@ -3,16 +3,12 @@ services:
     build: .
     restart: unless-stopped
     init: true
-    shm_size: 512mb
     ports:
       - "127.0.0.1:4311:4310"
     environment:
       PUBLIC_URL: http://127.0.0.1:4311
       ADMIN_PASSWORD_HASH: ${ADMIN_PASSWORD_HASH:-}
       SETUP_TOKEN: ${SETUP_TOKEN:?Generate SETUP_TOKEN in .env}
-      COLLECTOR_PROXY_SERVER: ${COLLECTOR_PROXY_SERVER:-}
-      COLLECTOR_PROXY_USERNAME: ${COLLECTOR_PROXY_USERNAME:-}
-      COLLECTOR_PROXY_PASSWORD: ${COLLECTOR_PROXY_PASSWORD:-}
     volumes:
       - giveaway-local-data:/app/data
     security_opt:

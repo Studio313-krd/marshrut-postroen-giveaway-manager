@@ -2,7 +2,6 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { newContest, normalizeComments, parseCSV, evaluate, configure, freeze, drawNext, publicContest, permutation, digest, review, reelURL } from '../server/domain.js';
 import { demoContest } from '../server/demo.js';
-import { extractComments, mediaIdFromURL } from '../server/collector.js';
 
 function contest(rows){const c=newContest();c.comments=normalizeComments(rows);return c;}
 const valid='Арт-зона, лекторий, фудкорт. @my_friend';
@@ -70,8 +69,4 @@ test('verification cannot confirm unchecked conditions or reject without reason'
   const c=demoContest();c.acknowledged=true;freeze(c);const r=drawNext(c);
   assert.throws(()=>review(c,r.username,{status:'confirmed',checks:{like:true}}),/всех условий/);assert.throws(()=>review(c,r.username,{status:'rejected',note:''}),/причину/);
   review(c,r.username,{status:'confirmed',checks:{like:true,follow:true,save:true,share:true},note:'Скриншоты получены'});assert.equal(c.reviews[r.username].status,'confirmed');
-});
-test('network collector only extracts comments, never captions or related media',()=>{
-  const body={caption:{id:'cap',text:'caption',user:{username:'caption'}},comments:[{pk:'1',text:valid,user:{username:'alice'},created_at:1720000000,preview_child_comments:[{pk:'2',text:'reply',user:{username:'bob'}}]}]};
-  const rows=extractComments(body);assert.equal(rows.length,2);assert.equal(rows[1].parentId,'1');assert.equal(rows[0].username,'alice');assert.equal(mediaIdFromURL('https://www.instagram.com/reel/B/'),'1');
 });
