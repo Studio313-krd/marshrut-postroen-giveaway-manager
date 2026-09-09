@@ -1,0 +1,31 @@
+services:
+  giveaway:
+    build: .
+    image: marshrut-postroen-giveaway:latest
+    pull_policy: build
+    restart: unless-stopped
+    init: true
+    shm_size: 512mb
+    environment:
+      PUBLIC_URL: https://giveaway.marshrut-postroen.com
+      ADMIN_PASSWORD_HASH: ${ADMIN_PASSWORD_HASH:-}
+      SETUP_TOKEN: ${SETUP_TOKEN:-}
+    volumes:
+      - giveaway-data:/app/data
+    networks:
+      proxy:
+        aliases:
+          - marshrut-giveaway
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+volumes:
+  giveaway-data:
+networks:
+  proxy:
+    external: true
+    name: ${PROXY_NETWORK:-web}

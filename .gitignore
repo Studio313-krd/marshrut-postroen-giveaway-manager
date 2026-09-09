@@ -1,0 +1,9 @@
+node_modules/
+data/
+artifacts/
+reference-*
+*.log
+.env
+.env.*
+!.env.example
+deployment-private/
