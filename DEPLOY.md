@@ -2,7 +2,7 @@
 
 Адрес: https://giveaway.marshrut-postroen.com · сервер 185.72.147.187.
 
-На сервере уже используется Nginx Proxy Manager, сеть `web`, порты 80 и 443. Новый Caddy не требуется. Приложение не публикует собственный порт наружу, доступно прокси по имени `marshrut-giveaway:4310`.
+На сервере уже используется Nginx Proxy Manager, сеть `web`, порты 80 и 443. Новый Caddy не требуется. Существующая запись Nginx направляет запросы на `http://185.72.147.187:9998`. Stack публикует порт `9998` в порт приложения `4310`. Основной адрес для менеджеров — HTTPS-домен; прямой вход по IP не используется.
 
 ## Portainer
 
@@ -11,7 +11,7 @@
 3. Repository URL: `https://github.com/Studio313-krd/marshrut-postroen-giveaway-manager.git`, reference `refs/heads/main`, Compose path `docker-compose.yml`.
 4. Environment variables: `PROXY_NETWORK=web` и `ADMIN_PASSWORD_HASH` из созданного локально `data/auth.json` (поле passwordHash). Пароль не отправляйте в GitHub. Альтернатива: случайный `SETUP_TOKEN` минимум 32 символа для первичной настройки через форму. Не задавайте общий пароль по умолчанию.
 5. Deploy the stack. Первая сборка скачивает браузер Chromium и может занять несколько минут.
-6. Nginx Proxy Manager → Add Proxy Host: домен `giveaway.marshrut-postroen.com`, scheme `http`, Forward Hostname `marshrut-giveaway`, port `4310`. Advanced: `client_max_body_size 25m;` и `proxy_read_timeout 120s;`. SSL → выпустить сертификат Let's Encrypt, Force SSL. Не включайте Cache Assets для API.
+6. Запись Nginx уже настроена владельцем: домен `giveaway.marshrut-postroen.com`, scheme `http`, Forward Hostname `185.72.147.187`, port `9998`, сертификат Let's Encrypt. При обновлении Stack менять эту запись не требуется. Для нового окружения рекомендуемые параметры: Force SSL, `client_max_body_size 25m;`, `proxy_read_timeout 120s;`, без Cache Assets для API.
 7. Откройте HTTPS-адрес и войдите как `admin`. Если выбран SETUP_TOKEN: единожды откройте `https://giveaway.marshrut-postroen.com/#setup=ЗНАЧЕНИЕ_ТОКЕНА` и создайте пароль. Ссылка содержит секрет, не публикуйте её.
 
 ## Данные и обновления

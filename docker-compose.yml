@@ -6,6 +6,8 @@ services:
     restart: unless-stopped
     init: true
     shm_size: 512mb
+    ports:
+      - "9998:4310"
     environment:
       PUBLIC_URL: https://giveaway.marshrut-postroen.com
       ADMIN_PASSWORD_HASH: ${ADMIN_PASSWORD_HASH:-}
