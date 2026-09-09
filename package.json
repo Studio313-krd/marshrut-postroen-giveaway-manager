@@ -1,6 +1,6 @@
 {
   "name": "marshrut-contests",
-  "version": "3.0.0",
+  "version": "3.1.0",
   "private": true,
   "type": "module",
   "description": "Конкурсы Маршрут-Построен — импорт Excel, проверка через ИИ и розыгрыши",

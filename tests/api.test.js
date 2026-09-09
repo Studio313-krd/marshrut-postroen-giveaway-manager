@@ -17,6 +17,14 @@ test('HTTP import → review → freeze → idempotent draw → audit, restart a
   async function req(path,method='GET',body,headers={}){const response=await fetch(base+'/api'+path,{method,headers:{'Content-Type':'application/json','X-CSRF-Token':csrf,...headers},body:body===undefined?undefined:JSON.stringify(body)});const data=await response.json();return{status:response.status,data};}
   assert.equal((await req('/contests','POST',{name:'Denied'}, {'X-CSRF-Token':'wrong'})).status,403);
   assert.equal((await req('/contests','GET',undefined,{'Origin':'https://evil.example'})).status,403);
+  assert.equal((await req('/contests','POST',{reelUrl:'https://www.instagram.com/reel/example/'})).status,400);
+  assert.equal((await req('/contests','POST',{base64:Buffer.from('invalid').toString('base64'),filename:'bad.xlsx'})).status,400);
+  assert.equal((await req('/contests')).data.length,0,'Failed upload must not leave an empty contest');
+  const original=await commentsWorkbook([{username:'alice',text:'Exact text\n❤️'},{username:'alice',text:'Duplicate author'}]);
+  const created=await req('/contests','POST',{base64:original.toString('base64'),filename:'Комментарии.xlsx'});assert.equal(created.status,201);assert.equal(created.data.reelUrl,'');assert.equal(created.data.comments.length,2);assert.equal(created.data.source.originalFileAvailable,true);
+  const sourcePath='/contests/'+created.data.id+'/export/source.xlsx';const downloaded=await fetch(base+'/api'+sourcePath);assert.deepEqual(Buffer.from(await downloaded.arrayBuffer()),original);assert.match(downloaded.headers.get('content-disposition'),/filename\*=UTF-8/);
+  assert.equal((await req('/contests/'+created.data.id+'/import','POST',{base64:'broken',filename:'broken.xlsx'})).status,400);
+  assert.deepEqual(Buffer.from(await(await fetch(base+'/api'+sourcePath)).arrayBuffer()),original,'A rejected replacement must retain the original');
   let {data:c}=await req('/demo','POST',{});const path='/contests/'+c.id;
   const source=await commentsWorkbook([{username:'alice',text:'hi'}]);
   const bad=await req(path+'/import','POST',{base64:source.toString('base64'),filename:'source.xlsx'});assert.equal(bad.status,200);assert.equal(bad.data.comments.length,1);
@@ -39,4 +47,5 @@ test('HTTP import → review → freeze → idempotent draw → audit, restart a
   await new Promise(resolve=>{child.once('exit',resolve);child.kill();});
   child=spawn(process.execPath,['server/index.js'],{env:{...process.env,NODE_ENV:'test',AUTH_DISABLED:'true',PUBLIC_URL:'http://127.0.0.1:14310',PORT:String(port),CONTEST_DATA_DIR:dir},stdio:'ignore',windowsHide:true});csrf=await ready();
   const persisted=(await req(p)).data;assert.deepEqual(persisted.draw,final.draw);assert.equal(persisted.reviews[who].status,'confirmed');
+  assert.deepEqual(Buffer.from(await(await fetch(base+'/api'+sourcePath)).arrayBuffer()),original,'Original XLSX survives restart');
 });

@@ -57,7 +57,7 @@ export async function openStage({contest,draw,close,toast}) {
       text(primary?'ОСНОВНОЙ':'РЕЗЕРВ',x+12,cy+112,body(9),'#869276');
     }
     line(64,960,W-64,960);
-    text(c.demo?'РЕПЕТИЦИЯ: УЧАСТНИКИ И ЛОКАЦИИ ВЫМЫШЛЕНЫ':new URL(c.reelUrl).pathname,W/2,999,body(12),c.demo?'#e88565':'#8b967b','center');
+    ctx.font=body(12);text(c.demo?'РЕПЕТИЦИЯ: УЧАСТНИКИ И ЛОКАЦИИ ВЫМЫШЛЕНЫ':fitText(ctx,c.source?.label||'Конкурс по загруженному Excel',W-128),W/2,999,body(12),c.demo?'#e88565':'#8b967b','center');
     text('СПИСОК ЗАФИКСИРОВАН · '+c.snapshot.hash.slice(0,16).toUpperCase(),64,1040,body(11),'#7a886c');
     text('МАРШРУТ ПОСТРОЕН / КОНКУРСЫ',W-64,1040,body(11),'#7a886c','right');
   }

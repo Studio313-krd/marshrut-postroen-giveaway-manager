@@ -36,3 +36,8 @@ test('source replacement invalidates prompt and selection and cannot change a fr
   const sourceHash=digest(c.comments);c.comments[0].text='different';assert.throws(()=>freeze(c),/исходному файлу/);c.comments[0].text=parsed.rows[0].text;assert.equal(digest(c.comments),sourceHash);
   freeze(c);assert.throws(()=>importSource(c,parsed,'other.xlsx'),/зафиксирован/);
 });
+
+test('prompt describes the original GramLens workbook and never requires a reel or conversion',async()=>{
+  const {b,s}=externalBook();s.addRow(['1','alice','',false,'Hello',8]);const c=newContest();importSource(c,await parse(b),'Comments export.xlsx');c.conditions='Написать комментарий и поставить лайк';
+  const prompt=createPrompt(c);assert.equal(c.reelUrl,'');assert.match(prompt,/Comments export.xlsx/);assert.match(prompt,/Имя пользователя/);assert.match(prompt,/Текст комментария/);assert.match(prompt,/«Лайки» в выгрузке — лайки комментария/);assert.match(prompt,/РОВНО ДВУМЯ столбцами/);assert(!/Рилс:|подготовлен сервисом|скачанн/.test(prompt));
+});

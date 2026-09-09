@@ -12,8 +12,8 @@ export function reelURL(value) {
   return `https://www.instagram.com${url.pathname.replace(/\/$/, '')}/`;
 }
 export function newContest(input = {}) {
-  return { id: randomUUID(), name: String(input.name || 'Стереопикник · розыгрыш').trim().slice(0, 150),
-    reelUrl: reelURL(input.reelUrl || DEFAULT_URL), owner: 'marshrut_postroen.media',
+  return { id: randomUUID(), name: String(input.name || 'Конкурс').trim().slice(0, 150),
+    reelUrl: input.reelUrl ? reelURL(input.reelUrl) : '', owner: 'marshrut_postroen.media',
     createdAt: new Date().toISOString(), locations: structuredClone(stereoLocations), requiredLocations: 3, duplicatePolicy: 'exclude',
     comments: [], overrides: {}, source: null, acknowledged: false, snapshot: null, draw: null, reviews: {}, events: [], demo: false };
 }

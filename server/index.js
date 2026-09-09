@@ -15,11 +15,16 @@ if(existsSync(resolve(root,'.env')))process.loadEnvFile(resolve(root,'.env'));
 const dataDir=resolve(process.env.CONTEST_DATA_DIR||resolve(root,'data'));
 mkdirSync(dataDir,{recursive:true});
 const db=new DatabaseSync(resolve(dataDir,'contests.sqlite'));
-db.exec('PRAGMA journal_mode=WAL; CREATE TABLE IF NOT EXISTS contests (id TEXT PRIMARY KEY, body TEXT NOT NULL);');
+db.exec('PRAGMA journal_mode=WAL; CREATE TABLE IF NOT EXISTS contests (id TEXT PRIMARY KEY, body TEXT NOT NULL); CREATE TABLE IF NOT EXISTS source_files (contest_id TEXT PRIMARY KEY, filename TEXT NOT NULL, body BLOB NOT NULL);');
 const save=c=>db.prepare('INSERT INTO contests (id,body) VALUES (?,?) ON CONFLICT(id) DO UPDATE SET body=excluded.body').run(c.id,JSON.stringify(c));
+function saveWithSource(c,buffer){
+  c.source.originalFileAvailable=true;
+  db.exec('BEGIN IMMEDIATE');try{save(c);db.prepare('INSERT INTO source_files (contest_id,filename,body) VALUES (?,?,?) ON CONFLICT(contest_id) DO UPDATE SET filename=excluded.filename,body=excluded.body').run(c.id,c.source.label,buffer);db.exec('COMMIT');}catch(error){db.exec('ROLLBACK');throw error;}
+}
 const get=id=>{const row=db.prepare('SELECT body FROM contests WHERE id=?').get(id);assert(row,'Конкурс не найден.',404);return JSON.parse(row.body);};
 const all=()=>db.prepare('SELECT body FROM contests ORDER BY rowid DESC').all().map(r=>JSON.parse(r.body));
 for(const c of all())if(!c.snapshot&&c.workflow!=='external'&&!c.demo){c.workflow='external';c.conditions='';c.selectedComments=[];save(c);}
+for(const c of all())if(!c.snapshot&&c.prompt&&c.conditions){c.prompt=createPrompt(c);save(c);}
 const port=Number(process.env.PORT||4310);
 const host=process.env.HOST||'127.0.0.1';
 const publicURL=process.env.PUBLIC_URL||`http://127.0.0.1:${port}`;
@@ -43,13 +48,18 @@ const server=http.createServer(async(req,res)=>{
     if(path==='/healthz')return json(res,{ok:true});
     if(path==='/robots.txt')return attach(res,'User-agent: *\nDisallow: /\n','text/plain','robots.txt');
     const session=auth.session(req);
-    if(path==='/api/session'&&req.method==='GET')return json(res,{authenticated:!!session,csrf:session?.csrf,username:session?.username,setupRequired:auth.setupRequired,version:'3.0.0'});
+    if(path==='/api/session'&&req.method==='GET')return json(res,{authenticated:!!session,csrf:session?.csrf,username:session?.username,setupRequired:auth.setupRequired,version:'3.1.0'});
     if(['/api/login','/api/setup'].includes(path)&&req.method==='POST') {assert(req.headers['content-type']?.startsWith('application/json'),'Нужен JSON.',415);const logged=await auth.login(req,res,await body(req),path==='/api/setup');return json(res,{authenticated:true,csrf:logged.csrf,username:'admin',setupRequired:false});}
     if(path.startsWith('/api/'))assert(session,'Войдите в аккаунт.',401);
     if(path.startsWith('/api/') && !['GET','HEAD'].includes(req.method)) assert(req.headers['x-csrf-token']===session.csrf,'Обновите страницу: сессия приложения изменилась.',403);
     if(path==='/api/logout'&&req.method==='POST'){auth.logout(req,res);return json(res,{ok:true});}
-    if(path==='/api/contests' && req.method==='GET')return json(res,all().map(c=>({id:c.id,name:c.name,reelUrl:c.reelUrl,createdAt:c.createdAt,demo:c.demo,frozen:!!c.snapshot,places:c.draw?.results.length||0,totalPlaces:totalPlaces(c),results:c.draw?.results||[],reviews:c.reviews,stats:evaluate(c).stats})));
-    if(path==='/api/contests' && req.method==='POST') {const input=await body(req);const c=newContest({...input,name:input.name||'Конкурс · '+new Date().toLocaleDateString('ru-RU')});c.workflow='external';c.conditions='';c.selectedComments=[];c.winnerCount=5;c.reserveCount=5;save(c);return json(res,publicContest(c),201);}
+    if(path==='/api/contests' && req.method==='GET')return json(res,all().map(c=>({id:c.id,name:c.name,sourceLabel:c.source?.label,createdAt:c.createdAt,demo:c.demo,frozen:!!c.snapshot,places:c.draw?.results.length||0,totalPlaces:totalPlaces(c),results:c.draw?.results||[],reviews:c.reviews,stats:evaluate(c).stats})));
+    if(path==='/api/contests' && req.method==='POST') {
+      const input=await body(req);assert(typeof input.base64==='string','Загрузите исходный Excel, чтобы создать конкурс.');
+      const buffer=Buffer.from(input.base64,'base64'),parsed=await readSourceWorkbook(buffer);
+      const c=newContest({name:input.name||'Конкурс · '+new Date().toLocaleDateString('ru-RU')});c.conditions='';c.winnerCount=5;c.reserveCount=5;
+      importSource(c,parsed,input.filename);saveWithSource(c,buffer);return json(res,publicContest(c),201);
+    }
     if(path==='/api/demo' && req.method==='POST') {const c=demoContest();save(c);return json(res,publicContest(c),201);}
     const match=path.match(/^\/api\/contests\/([\w-]+)(?:\/(.+))?$/);
     if(match) {
@@ -58,13 +68,18 @@ const server=http.createServer(async(req,res)=>{
       if(!action && req.method==='PATCH') {const input=await body(req);c=get(id);configure(c,input);save(c);return json(res,publicContest(c));}
       if(action==='prompt'&&req.method==='POST'){const input=await body(req);c=get(id);assert(c.comments.length,'Сначала загрузите Excel с комментариями.');configure(c,{conditions:input.conditions});assert(c.conditions,'Введите условия конкурса.');c.prompt=createPrompt(c);event(c,'prompt_created',{conditionsHash:digest(c.conditions)});save(c);return json(res,publicContest(c));}
       if(action==='selection'&&req.method==='POST'){const input=await body(req);assert(typeof input.base64==='string','Загрузите Excel.');const rows=await readWorkbook(Buffer.from(input.base64,'base64'));c=get(id);acceptSelection(c,rows,input.filename);save(c);return json(res,publicContest(c));}
+      if(action==='export/source.xlsx'&&req.method==='GET'){
+        const source=db.prepare('SELECT filename,body FROM source_files WHERE contest_id=?').get(id);assert(source,'Исходный файл не сохранён для этого старого конкурса.',404);
+        const filename=String(source.filename).split(/[\\/]/).pop();
+        res.writeHead(200,{'Content-Type':'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet','Content-Disposition':`attachment; filename="source-${id}.xlsx"; filename*=UTF-8''${encodeURIComponent(filename).replace(/['()]/g,c=>'%'+c.charCodeAt(0).toString(16))}`,'Cache-Control':'no-store'});res.end(Buffer.from(source.body));return;
+      }
       if(action==='export/comments.xlsx'&&req.method==='GET'){assert(c.comments.length,'Сначала загрузите Excel с комментариями.');return attach(res,await commentsWorkbook(c.comments),'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',`comments-${id}.xlsx`);}
       if(action==='export/selected.xlsx'&&req.method==='GET')return attach(res,await commentsWorkbook((c.snapshot?.payload.participants||evaluate(c).rows).map(r=>r.comment)),'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',`participants-${id}.xlsx`);
       if(action==='import'&&req.method==='POST') {
         assert(!c.snapshot,'Список зафиксирован; импорт закрыт.',409);
         const input=await body(req);assert(typeof input.base64==='string','Загрузите файл Excel .xlsx.');
-        const parsed=await readSourceWorkbook(Buffer.from(input.base64,'base64'));c=get(id);
-        importSource(c,parsed,input.filename);save(c);return json(res,publicContest(c));
+        const buffer=Buffer.from(input.base64,'base64'),parsed=await readSourceWorkbook(buffer);c=get(id);
+        importSource(c,parsed,input.filename);saveWithSource(c,buffer);return json(res,publicContest(c));
       }
       if(action==='override'&&req.method==='POST') {
         const input=await body(req);c=get(id);assert(!c.snapshot,'Список уже зафиксирован.',409);
