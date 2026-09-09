@@ -11,6 +11,7 @@ import { createAuth } from './auth.js';
 import { commentsWorkbook,readWorkbook } from './excel.js';
 import { createPrompt } from './prompt.js';
 import { collectedImport } from './collection-import.js';
+import { browserInput } from './browser-control.js';
 
 const root=resolve(fileURLToPath(new URL('..',import.meta.url)));
 if(existsSync(resolve(root,'.env')))process.loadEnvFile(resolve(root,'.env'));
@@ -52,8 +53,8 @@ const server=http.createServer(async(req,res)=>{
     if(path==='/healthz')return json(res,{ok:true});
     if(path==='/robots.txt')return attach(res,'User-agent: *\nDisallow: /\n','text/plain','robots.txt');
     const session=auth.session(req);
-    if(path==='/api/session'&&req.method==='GET')return json(res,{authenticated:!!session,csrf:session?.csrf,username:session?.username,setupRequired:auth.setupRequired,version:'2.0.0'});
-    if(['/api/login','/api/setup'].includes(path)&&req.method==='POST') {assert(req.headers['content-type']?.startsWith('application/json'),'Нужен JSON.',415);const logged=await auth.login(req,res,await body(req),path==='/api/setup');return json(res,{authenticated:true,csrf:logged.csrf,username:'admin'});}
+    if(path==='/api/session'&&req.method==='GET')return json(res,{authenticated:!!session,csrf:session?.csrf,username:session?.username,setupRequired:auth.setupRequired,collectorMode:process.env.COLLECTOR_HEADLESS==='false'?'desktop':'server',version:'2.0.0'});
+    if(['/api/login','/api/setup'].includes(path)&&req.method==='POST') {assert(req.headers['content-type']?.startsWith('application/json'),'Нужен JSON.',415);const logged=await auth.login(req,res,await body(req),path==='/api/setup');return json(res,{authenticated:true,csrf:logged.csrf,username:'admin',setupRequired:false,collectorMode:process.env.COLLECTOR_HEADLESS==='false'?'desktop':'server'});}
     if(path.startsWith('/api/'))assert(session,'Войдите в аккаунт.',401);
     if(path.startsWith('/api/') && !['GET','HEAD'].includes(req.method)) assert(req.headers['x-csrf-token']===session.csrf,'Обновите страницу: сессия приложения изменилась.',403);
     if(path==='/api/logout'&&req.method==='POST'){auth.logout(req,res);return json(res,{ok:true});}
@@ -94,6 +95,12 @@ const server=http.createServer(async(req,res)=>{
       }
       if(action==='review'&&req.method==='POST') {const input=await body(req);c=get(id);review(c,input.username,input);save(c);return json(res,publicContest(c));}
       if(action==='collector/open'&&req.method==='POST') {assert(!c.snapshot,'Список уже зафиксирован.',409);return json(res,await collector.open(c,{headless:process.env.COLLECTOR_HEADLESS!=='false'}));}
+      if(action==='collector/screen'&&req.method==='GET') {
+        assert(collector.job?.contestId===id&&collector.job.page&&!collector.job.page.isClosed(),'Окно Instagram закрыто. Запустите сбор заново.',409);
+        const page=collector.job.page,screen=await page.screenshot({type:'jpeg',quality:75,timeout:10000}),address=new URL(page.url());
+        res.setHeader('X-Browser-Address',encodeURIComponent(address.origin+address.pathname));
+        return attach(res,screen,'image/jpeg','instagram.jpg');
+      }
       if(action==='collect'&&req.method==='POST') {
         assert(!c.snapshot,'Список уже зафиксирован.',409);
         if(collector.job&&collector.job.contestId!==id&&!['closed','error','collected','paused','ready'].includes(collector.job.status))assert(false,'Уже идёт сбор другого конкурса.',409);
@@ -104,7 +111,10 @@ const server=http.createServer(async(req,res)=>{
       }
       if(action?.startsWith('collector/')&&req.method==='POST') {
         assert(collector.job?.contestId===id,'Сбор открыт для другого конкурса.',409);
+        if(action==='collector/view'){collector.stop();await collector.loopPromise;return json(res,collector.status());}
+        if(action==='collector/input'){assert(!c.snapshot,'Конкурс уже зафиксирован.',409);assert(!collector.loopPromise,'Приостановите сбор перед входом в Instagram.',409);await browserInput(collector.job.page,await body(req));return json(res,{ok:true});}
         if(action==='collector/start')return json(res,await collector.collect());
+        if(action==='collector/focus'){assert(collector.job.page&&!collector.job.page.isClosed(),'Окно Chrome уже закрыто.',409);await collector.job.page.bringToFront();return json(res,{ok:true});}
         if(action==='collector/stop')return json(res,collector.stop());
         if(action==='collector/close') {await collector.close();return json(res,collector.status());}
         if(action==='collector/import') {const imported=collector.export(id);c=get(id);importInto(c,imported.comments,imported.source);return json(res,publicContest(c));}
@@ -126,3 +136,5 @@ function reelSafe(value) {let u;try{u=new URL(value);}catch{assert(false,'Нек
 server.listen(port,host,()=>console.log(`Конкурсы Маршрут-Построен: http://${host}:${port}`));
 server.on('error',error=>{console.error(error.code==='EADDRINUSE'?`Порт ${port} занят. Приложение, возможно, уже открыто.`:error.message);process.exitCode=1;});
 for(const signal of ['SIGINT','SIGTERM'])process.on(signal,()=>{collector.close().finally(()=>server.close(()=>{db.close();process.exit(0);}));});
+// Only the native desktop launcher has this private parent/child IPC channel.
+process.on('message',message=>{if(message?.type==='desktop-shutdown')collector.close().finally(()=>server.close(()=>{db.close();process.exit(0);}));});

@@ -12,6 +12,9 @@ services:
       PUBLIC_URL: https://giveaway.marshrut-postroen.com
       ADMIN_PASSWORD_HASH: ${ADMIN_PASSWORD_HASH:-}
       SETUP_TOKEN: ${SETUP_TOKEN:-}
+      COLLECTOR_PROXY_SERVER: ${COLLECTOR_PROXY_SERVER:-}
+      COLLECTOR_PROXY_USERNAME: ${COLLECTOR_PROXY_USERNAME:-}
+      COLLECTOR_PROXY_PASSWORD: ${COLLECTOR_PROXY_PASSWORD:-}
     volumes:
       - giveaway-data:/app/data
     networks:

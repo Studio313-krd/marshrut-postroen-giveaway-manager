@@ -3,13 +3,16 @@ import { resolve } from 'node:path';
 import { reelURL,normalizeComments } from './domain.js';
 import { readDOMComments } from './dom-comments.js';
 import { inspectCommentPane,findReplyControls,hasTerminalComment,completionEvidence } from './comment-scroll.js';
+import { dismissLoginInvitation } from './instagram-dialog.js';
+import { locateCommentsControl } from './instagram-comments-control.js';
+import { instagramProxy } from './instagram-proxy.js';
 
 export function mediaIdFromURL(url){const code=new URL(reelURL(url)).pathname.split('/')[2],alphabet='ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';let id=0n;for(const char of code)id=id*64n+BigInt(alphabet.indexOf(char));return id.toString();}
 export function extractComments(body){
   const found=[];
   function comment(node,parentId=''){
     const user=node.user?.username??node.owner?.username??node.username,id=node.pk??node.id;if(!user||!id||typeof node.text!=='string')return;
-    found.push({id:String(id),username:user,text:node.text,timestamp:node.created_at??node.created_at_utc??node.timestamp??'',parentId});
+    found.push({id:String(id),username:user,text:node.text,timestamp:node.created_at??node.created_at_utc??node.timestamp??'',parentId:parentId||String(node.parent_comment_id??'')});
     for(const child of node.preview_child_comments??node.child_comments??[])comment(child,String(id));
     for(const edge of node.edge_threaded_comments?.edges??[])comment(edge.node,String(id));
   }
@@ -17,7 +20,7 @@ export function extractComments(body){
     if(!value||typeof value!=='object')return;if(Array.isArray(value)){value.forEach(walk);return;}
     for(const[key,child]of Object.entries(value)){
       if(['comments','preview_comments','child_comments'].includes(key)&&Array.isArray(child))child.forEach(n=>comment(n,key==='child_comments'?String(value.parent_comment_id??'reply'):''));
-      else if(/^(?:comments_connection|edge_media_to_parent_comment|edge_media_to_comment|xdt_api__v1__media__media_id__comments(?:__connection)?)$/.test(key)){if(child?.edges)child.edges.forEach(e=>comment(e.node));else if(child?.comments)child.comments.forEach(n=>comment(n));}
+      else if(/^(?:comments_connection|edge_media_to_parent_comment|edge_media_to_comment|xdt_api__v1__media__media_id__comments(?:(?:__parent_comment_id__child_comments)?__connection)?)$/.test(key)){if(child?.edges)child.edges.forEach(e=>comment(e.node));else if(child?.comments)child.comments.forEach(n=>comment(n));}
       else if(!['caption','user','owner'].includes(key))walk(child);
     }
   }walk(body);return found;
@@ -29,16 +32,17 @@ export function commentPageInfo(body){
 }
 export class InstagramCollector{
   constructor(dataDir){this.dataDir=dataDir;this.job=null;this.responseTasks=new Set();this.loopPromise=null;}
-  status(){if(!this.job)return null;const{context,page,comments,replyAttempts,...safe}=this.job;return{...safe,count:comments.size};}
+  status(){if(!this.job)return null;const{context,page,comments,replyAttempts,blockedPaths,...safe}=this.job;return{...safe,count:comments.size,browserAvailable:!!page&&!page.isClosed()};}
   async open(contest,options={}){
     if(this.job&&!['closed','error'].includes(this.job.status))throw Object.assign(new Error('Сначала завершите текущую загрузку Instagram.'),{status:409});
     if(this.job?.context)await this.close();
     const profile=resolve(this.dataDir,'instagram-profile');mkdirSync(profile,{recursive:true});
-    const job=this.job={contestId:contest.id,reelUrl:contest.reelUrl,owner:contest.owner,status:'opening',message:'Открываем Chrome…',comments:new Map(),startedAt:new Date().toISOString(),rounds:0,context:null,page:null,stop:false,completeness:'partial',terminalCommentSeen:false,reachedEnd:false,replyAttempts:new Map(),stablePasses:0,atBottom:false};
+    const job=this.job={contestId:contest.id,reelUrl:contest.reelUrl,owner:contest.owner,status:'opening',message:'Открываем Chrome…',comments:new Map(),startedAt:new Date().toISOString(),rounds:0,context:null,page:null,stop:false,completeness:'partial',terminalCommentSeen:false,reachedEnd:false,replyAttempts:new Map(),blockedPaths:new Set(),stablePasses:0,atBottom:false,headed:options.headless!==true};
     try{
-      const{chromium}=await import('playwright');job.context=await chromium.launchPersistentContext(profile,{...(process.platform==='win32'?{channel:'chrome'}:{}),headless:options.headless===true,viewport:{width:1280,height:900},args:['--disable-background-timer-throttling']});job.page=job.context.pages()[0]||await job.context.newPage();
-      job.context.on('close',()=>{job.stop=true;job.status='closed';job.message='Окно закрыто. Собранные комментарии сохранены.';this.persist(job);});this.watchResponses(job);
-      await job.page.goto(job.reelUrl,{waitUntil:'domcontentloaded',timeout:60000});await job.page.waitForTimeout(1800);await this.captureDOM(job);
+      const{chromium}=await import('playwright');job.context=await chromium.launchPersistentContext(profile,{...(process.platform==='win32'?{channel:'chrome'}:{}),headless:options.headless===true,proxy:instagramProxy(),viewport:{width:1280,height:900},args:['--disable-background-timer-throttling']});job.page=job.context.pages()[0]||await job.context.newPage();
+      job.context.on('close',()=>{job.stop=true;job.status='closed';job.message='Окно закрыто. Собранные комментарии сохранены.';this.persist(job);});
+      await job.context.route('**/*',route=>{const url=new URL(route.request().url());return job.blockedPaths.has(url.origin+url.pathname)?route.abort():route.continue();});this.watchResponses(job);
+      await job.page.goto(job.reelUrl,{waitUntil:'domcontentloaded',timeout:60000});await job.page.waitForTimeout(1800);await dismissLoginInvitation(job.page);await this.captureDOM(job);
       const initial=await job.page.evaluate(code=>{let result=null;function walk(v){if(!v||typeof v!=='object')return;if(v.xig_polaris_media?.code===code){result=v.xig_polaris_media;return;}for(const c of Object.values(v))if(c&&typeof c==='object')walk(c);}for(const script of document.querySelectorAll('script[type="application/json"]')){try{walk(JSON.parse(script.textContent));}catch{}if(result)break;}return result;},new URL(job.reelUrl).pathname.split('/')[2]);
       if(initial){for(const row of extractComments(initial))this.add(job,row,true);Object.assign(job,commentPageInfo(initial));const count=initial.if_not_gated_logged_out?.comment_count;if(Number.isInteger(count))job.reportedCount=count;}
       if(job.accessLimited)return this.status();
@@ -52,7 +56,8 @@ export class InstagramCollector{
         const url=new URL(response.url());if(!/(^|\.)instagram\.com$/.test(url.hostname))return;
         const direct=url.pathname.includes(`/media/${id}/comments/`),replyParent=url.pathname.match(/\/comments\/(\d+)\/child_comments/);let requestBody=response.request().postData()||'';try{requestBody=decodeURIComponent(requestBody);}catch{}
         const graphql=url.pathname.includes('/graphql')&&(requestBody.includes(id)||requestBody.includes(code));
-        if((response.status()===429&&(direct||graphql||url.pathname.startsWith('/ajax/')))||([401,403].includes(response.status())&&(direct||graphql))){job.stop=true;job.accessLimited=true;job.status='paused';job.completeness='partial';job.message='Instagram ограничил доступ. Сбор остановлен; полученное сохранено. Повторите позже или используйте выгрузку из своего браузера.';this.persist(job);await job.page.close().catch(()=>{});return;}
+        if(response.status()===429){job.blockedPaths?.add(url.origin+url.pathname);job.lastLimitedEndpoint=url.pathname;}
+        if([429,401,403].includes(response.status())&&(direct||graphql)){job.stop=true;job.accessLimited=true;job.accessStatus=response.status();job.accessEndpoint=url.pathname;job.status='paused';job.completeness='partial';job.message='Instagram ограничил доступ к комментариям. Сбор остановлен; полученное сохранено. Повторите позже.';this.persist(job);if(!job.headed)await job.page.close().catch(()=>{});return;}
         if(!direct&&!graphql)return;if(!response.ok())return;
         const body=await response.json();for(const row of extractComments(body)){if(replyParent)row.parentId=replyParent[1];this.add(job,row,true);}
         if(!replyParent)Object.assign(job,commentPageInfo(body));
@@ -60,7 +65,7 @@ export class InstagramCollector{
       }catch{}
     })();this.responseTasks.add(task);task.finally(()=>this.responseTasks.delete(task));});
   }
-  add(job,row,fromNetwork=false){try{const[n]=normalizeComments([row]),old=job.comments.get(n.id);job.comments.set(n.id,{...n,parentId:fromNetwork?n.parentId:(old?.parentId||n.parentId)});}catch{}}
+  add(job,row,fromNetwork=false){try{const[n]=normalizeComments([row]),old=job.comments.get(n.id);if(old&&!fromNetwork)return;job.comments.set(n.id,n);}catch{}}
   async collect(){
     if(!this.job?.page||this.job.accessLimited||!['ready','paused','collected'].includes(this.job.status)||this.loopPromise)throw Object.assign(new Error(this.job?.accessLimited?this.job.message:'Сначала откройте Instagram или дождитесь завершения текущего сбора.'),{status:409});
     const job=this.job;job.status='collecting';job.stop=false;job.loginRequired=false;job.reachedEnd=false;job.stablePasses=0;job.completeness='partial';job.message='Прокручиваем окно комментариев и сохраняем каждую загруженную порцию.';
@@ -70,12 +75,12 @@ export class InstagramCollector{
     const code=new URL(job.reelUrl).pathname.split('/')[2];let previousCount=job.comments.size,lastHeight=0,lastProgress=Date.now(),lastNudge=Date.now();
     await job.page.evaluate(inspectCommentPane,{code,reset:true});
     for(let round=0;round<1200&&!job.stop;round++){
-      if(job.page.isClosed())break;await this.captureDOM(job);
+      if(job.page.isClosed())break;await dismissLoginInvitation(job.page);await this.captureDOM(job);
       const gate=job.page.getByText(/Посмотрите, что говорят люди о публикации|See what people are saying about/).first();
       if(/\/accounts\/login|\/challenge|\/checkpoint/.test(job.page.url())||await gate.isVisible().catch(()=>false)){job.loginRequired=true;job.status='paused';job.completeness='partial';job.message='Instagram запросил вход. Войдите в этом окне и продолжите; собранные комментарии сохранены.';return;}
       const teaser=job.page.getByText(/Не пропускайте публикации|Don.t miss out on/).first();if(await teaser.isVisible().catch(()=>false))await job.page.getByRole('button',{name:/^(Закрыть|Close)$/i}).first().click({timeout:1500}).catch(()=>{});
       let pane=await job.page.evaluate(inspectCommentPane,{code});
-      if(!pane.found){if(round===0&&!job.comments.size)await job.page.getByRole('button',{name:/^(Комментировать|Comment)$/}).first().click({timeout:2000}).catch(()=>{});await job.page.waitForTimeout(1500);job.rounds++;if(round>=5){job.status='paused';job.message='Не найдено прокручиваемое окно комментариев. Откройте его в Chrome и продолжите сбор.';return;}continue;}
+      if(!pane.found){if(round===0&&await job.page.evaluate(locateCommentsControl,code))await job.page.locator('[data-mp-open-comments]').click({timeout:2500}).catch(()=>{});await job.page.waitForTimeout(1500);job.rounds++;if(round>=5){job.status='paused';job.message='Не найдено прокручиваемое окно комментариев. Откройте его в Chrome и продолжите сбор.';return;}continue;}
       const controls=await job.page.evaluate(findReplyControls,{code});let pending=0,expanded=false;
       for(const control of controls){const key=control.parentId+':'+control.text,attempts=job.replyAttempts.get(key)||0;pending++;if(attempts>=2)continue;job.replyAttempts.set(key,attempts+1);
         try{await job.page.locator(`[data-mp-replies="${control.index}"]`).click({timeout:1800});await job.page.waitForTimeout(850);await this.captureDOM(job);expanded=true;}catch{}break;
@@ -97,7 +102,7 @@ export class InstagramCollector{
   }
   async captureDOM(job=this.job){
     if(!job?.page||job.page.isClosed())return;const code=new URL(job.reelUrl).pathname.split('/')[2],rows=await job.page.evaluate(readDOMComments,code);rows.forEach(row=>this.add(job,row));job.domCount=rows.length;job.terminalCommentSeen=job.terminalCommentSeen||hasTerminalComment(rows,job.owner);
-    const reported=await job.page.evaluate(()=>{const buttons=[...document.querySelectorAll('button,[role="button"]')],index=buttons.findIndex(b=>b.querySelector('svg[aria-label="Комментировать"],svg[aria-label="Comment"]'));const value=index>=0?buttons[index+1]?.textContent?.replace(/[\s\u00a0]/g,''):'';return /^\d+$/.test(value||'')?Number(value):null;});if(reported!==null)job.reportedCount=reported;
+    const control=await job.page.evaluate(locateCommentsControl,code);if(control?.count!=null)job.reportedCount=control.count;
   }
   persist(job=this.job){if(!job?.comments.size)return;const folder=resolve(this.dataDir,'collections');mkdirSync(folder,{recursive:true});const file=resolve(folder,`${new URL(job.reelUrl).pathname.split('/')[2]}.json`);writeFileSync(file+'.tmp',JSON.stringify(this.payload(job),null,2));renameSync(file+'.tmp',file);}
   payload(job=this.job){return{reelUrl:job.reelUrl,comments:[...job.comments.values()],source:{kind:'browser',label:'Instagram · окно комментариев',at:new Date().toISOString(),completeness:job.completeness,reportedCount:job.reportedCount??null,reachedEnd:!!job.reachedEnd,terminalCommentSeen:!!job.terminalCommentSeen,loginRequired:!!job.loginRequired,pendingReplies:job.pendingReplies||0,rounds:job.rounds}};}

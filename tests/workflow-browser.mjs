@@ -5,7 +5,9 @@ import { resolve } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import assert from 'node:assert/strict';
 import { commentsWorkbook } from '../server/excel.js';
-const dir=mkdtempSync(resolve('data','ui-v2-')),port=14312,base=`http://127.0.0.1:${port}`,token=randomBytes(32).toString('hex'),password=randomBytes(24).toString('base64url'),docker=process.argv.includes('--docker');
+import { browserInput } from '../server/browser-control.js';
+const dir=mkdtempSync(resolve('data','ui-v2-')),port=14312,base=`http://127.0.0.1:${port}`,token=randomBytes(32).toString('hex'),password=randomBytes(24).toString('base64url'),docker=process.argv.includes('--docker'),desktop=process.argv.includes('--desktop');
+if(desktop)process.env.COLLECTOR_HEADLESS='false';
 let logs='';const child=docker?spawn('docker',['run','--rm','--init','--name','marshrut-ui-test','-p',`127.0.0.1:${port}:4310`,'-e',`PUBLIC_URL=${base}`,'-e',`SETUP_TOKEN=${token}`,'-e','CONTEST_DATA_DIR=/tmp/giveaway-test','--mount',`type=bind,source=${resolve('server')},target=/app/server,readonly`,'--mount',`type=bind,source=${resolve('public')},target=/app/public,readonly`,'contest-marshrut-postroen-giveaway'],{stdio:['ignore','pipe','pipe'],windowsHide:true}):spawn(process.execPath,['server/index.js'],{env:{...process.env,PORT:String(port),HOST:'127.0.0.1',PUBLIC_URL:base,CONTEST_DATA_DIR:dir,SETUP_TOKEN:token,ADMIN_PASSWORD_HASH:'',NODE_ENV:'test',AUTH_DISABLED:'false'},stdio:['ignore','pipe','pipe'],windowsHide:true});child.stderr.on('data',x=>logs+=x);child.stdout.on('data',x=>logs+=x);
 let browser;try{
   for(let i=0;i<600;i++){try{if((await fetch(base+'/healthz')).ok)break;}catch{}await new Promise(r=>setTimeout(r,50));}
@@ -15,10 +17,32 @@ let browser;try{
   assert.equal(await page.locator('.side-nav button').count(),3);await page.evaluate(()=>document.fonts.ready);await page.screenshot({path:'artifacts/v2-new.png',fullPage:true,animations:'disabled'});
   const rows=Array.from({length:12},(_,i)=>({id:String(i+1),username:'test_guest_'+i,text:i?'Арт-зона, фудкорт, dj сеты @friend':'Плед зона → фудкорт → концееерт с @friend\nЖду праздник ❤️'}));rows.push({id:'99',username:'test_guest_0',text:'Ещё один комментарий'});rows.push({id:'100',username:'marshrut_postroen.media',text:'Правила конкурса'});
   // Collection is covered with a live reel and a virtualized DOM separately.
-  await page.route('**/collect',route=>route.fulfill({status:202,contentType:'application/json',body:JSON.stringify({status:'paused',count:0,message:'Тестовая выгрузка'})}));
+  let desktopJob=null,focusCalls=0,resumeCalls=0;
+  await page.route('**/collect',route=>{desktopJob={contestId:new URL(route.request().url()).pathname.split('/')[3],status:'paused',headed:desktop,browserAvailable:true,count:0,message:'Войдите в Instagram и продолжите сбор.'};return route.fulfill({status:202,contentType:'application/json',body:JSON.stringify(desktopJob)});});
+  if(!desktop){
+    const instagram=await context.newPage();await instagram.setViewportSize({width:1280,height:900});await instagram.setContent('<h1>Проверка входа в Instagram</h1><label>Имя<input id="user"></label><label>Пароль<input id="password" type="password"></label>');
+    await page.route('**/api/collector',route=>route.fulfill({contentType:'application/json',body:JSON.stringify(desktopJob)}));
+    await page.route('**/collector/view',route=>route.fulfill({contentType:'application/json',body:JSON.stringify(desktopJob)}));
+    await page.route('**/collector/screen',async route=>route.fulfill({contentType:'image/jpeg',body:await instagram.screenshot({type:'jpeg'}),headers:{'X-Browser-Address':'https://www.instagram.com/accounts/login/'}}));
+    await page.route('**/collector/input',async route=>{await browserInput(instagram,route.request().postDataJSON());await route.fulfill({contentType:'application/json',body:'{"ok":true}'});});
+    await page.route('**/collector/start',route=>{resumeCalls++;desktopJob.status='collecting';return route.fulfill({contentType:'application/json',body:JSON.stringify(desktopJob)});});
+    context.testInstagram=instagram;
+  }
+  if(desktop){await page.route('**/api/collector',route=>route.fulfill({contentType:'application/json',body:JSON.stringify(desktopJob)}));await page.route('**/collector/focus',route=>{focusCalls++;return route.fulfill({contentType:'application/json',body:'{"ok":true}'});});await page.route('**/collector/start',route=>{resumeCalls++;desktopJob.status='collecting';return route.fulfill({contentType:'application/json',body:JSON.stringify(desktopJob)});});}
   await page.getByRole('textbox',{name:'Укажите ссылку на рилс'}).fill('https://www.instagram.com/reel/Dcv1u1Jo1QE/');await page.getByRole('button',{name:'Продолжить',exact:true}).click();await page.getByRole('heading',{name:'Комментарии из рилса'}).waitFor();
+  if(desktop){assert.equal((await page.evaluate(()=>fetch('/api/session').then(r=>r.json()))).collectorMode,'desktop');await page.getByRole('button',{name:'Показать Chrome',exact:true}).click();await page.getByRole('button',{name:'Продолжить сбор',exact:true}).click();await page.getByRole('button',{name:'Остановить',exact:true}).waitFor();assert.equal(focusCalls,1);assert.equal(resumeCalls,1);await page.screenshot({path:'artifacts/desktop-controls.png',fullPage:true});await page.setViewportSize({width:390,height:844});assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));await page.screenshot({path:'artifacts/desktop-controls-mobile.png',fullPage:true});await page.setViewportSize({width:1440,height:1050});desktopJob.status='paused';await page.getByRole('button',{name:'Продолжить сбор',exact:true}).waitFor();}
+  else {
+    await page.getByRole('button',{name:'Открыть Instagram',exact:true}).click();const dialog=page.locator('.instagram-window'),image=dialog.locator('img');await image.waitFor();await page.waitForFunction(()=>document.querySelector('.instagram-window img')?.naturalWidth>0);
+    for(const [selector,value] of [['#user','manager-test'],['#password','private-test-value']]){
+      const box=await context.testInstagram.locator(selector).boundingBox(),display=await image.boundingBox();await image.click({position:{x:(box.x+10)*display.width/1280,y:(box.y+10)*display.height/900}});
+      await dialog.getByLabel('Текст для поля Instagram').fill(value);await dialog.getByRole('button',{name:'Вставить',exact:true}).click();await context.testInstagram.waitForFunction(({selector,value})=>document.querySelector(selector).value===value,{selector,value});assert.equal(await dialog.getByLabel('Текст для поля Instagram').inputValue(),'');
+    }
+    await page.screenshot({path:'artifacts/server-instagram-window.png'});await page.setViewportSize({width:390,height:844});assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));await page.screenshot({path:'artifacts/server-instagram-mobile.png'});await page.setViewportSize({width:1440,height:1050});
+    await dialog.getByRole('button',{name:'Продолжить сбор',exact:true}).click();await dialog.waitFor({state:'detached'});assert.equal(resumeCalls,1);desktopJob.status='paused';await context.testInstagram.close();
+  }
   const source=resolve('artifacts/ui-source.json');writeFileSync(source,JSON.stringify({comments:rows}));await page.locator('#source-file').setInputFiles(source);await page.getByText('14 комментариев собрано',{exact:true}).waitFor();
   const dl=page.waitForEvent('download');await page.getByRole('link',{name:'Скачать Excel со всеми комментариями'}).click();await (await dl).saveAs('artifacts/v2-all-comments.xlsx');
+  if(desktop){const transfer=page.waitForEvent('download');await page.getByRole('link',{name:'Сохранить для переноса на сайт'}).click();await (await transfer).saveAs('artifacts/desktop-transfer.json');assert.equal(JSON.parse(readFileSync('artifacts/desktop-transfer.json','utf8')).comments.length,14);}
   await page.locator('#conditions').fill('Один аккаунт — один комментарий. Назвать три локации и отметить друга. Локации: арт-зона, DJ-сеты, фудкорт, концерт, плед-зона. Поставить лайк.');await page.getByRole('button',{name:'Создать промпт'}).click();await page.locator('#generated-prompt').waitFor();const first=await page.locator('#generated-prompt').inputValue();
   await page.locator('#conditions').fill('Написать любимую песню. Отметить друга. Подписаться на медиагид.');await page.getByRole('button',{name:'Создать промпт'}).click();await page.waitForFunction(()=>document.querySelector('#generated-prompt')?.value.includes('Написать любимую песню.'));const second=await page.locator('#generated-prompt').inputValue();assert.notEqual(first,second);
   await page.getByRole('button',{name:'Копировать',exact:true}).click();assert.equal((await page.evaluate(()=>navigator.clipboard.readText())).replaceAll('\r\n','\n'),second);await page.screenshot({path:'artifacts/v2-prompt.png',fullPage:true,animations:'disabled'});
