@@ -12,9 +12,10 @@ export function inspectCommentPane({code,reset=false,advance=false}={}) {
   for(const old of document.querySelectorAll('[data-mp-comment-scroll]'))if(old!==pane)old.removeAttribute('data-mp-comment-scroll');
   pane.setAttribute('data-mp-comment-scroll','true');const before=pane.scrollTop;
   if(reset)pane.scrollTop=0;
-  else if(advance){const max=pane.scrollHeight-pane.clientHeight;if(max-before<=3){pane.scrollTop=Math.max(0,before-48);pane.scrollTop=max;}else pane.scrollTop=Math.min(max,before+Math.max(80,pane.clientHeight*.72));}
+  else if(advance){const max=pane.scrollHeight-pane.clientHeight;pane.scrollTop=Math.min(max,before+Math.max(80,pane.clientHeight*.72));}
   const rect=pane.getBoundingClientRect(),top=pane.scrollTop,height=pane.scrollHeight,viewport=pane.clientHeight;
-  return{found:true,top,height,viewport,bottom:height-viewport-top<=3,moved:Math.abs(top-before)>1,visibleComments:links.length,x:Math.max(0,Math.min(innerWidth-1,rect.left+rect.width/2)),y:Math.max(0,Math.min(innerHeight-1,rect.top+rect.height/2))};
+  const loading=[...pane.querySelectorAll('[role="progressbar"],[aria-busy="true"],[data-visualcompletion="loading-state"]')].some(n=>n.getClientRects().length&&getComputedStyle(n).visibility!=='hidden');
+  return{found:true,top,height,viewport,loading,bottom:height-viewport-top<=3,moved:Math.abs(top-before)>1,visibleComments:links.length,x:Math.max(0,Math.min(innerWidth-1,rect.left+rect.width/2)),y:Math.max(0,Math.min(innerHeight-1,rect.top+rect.height/2))};
 }
 export function findReplyControls({code}={}) {
   const pane=document.querySelector('[data-mp-comment-scroll]');if(!pane)return[];
@@ -31,8 +32,8 @@ export function findReplyControls({code}={}) {
   return result.map((item,index)=>{item.element.setAttribute('data-mp-replies',String(index));return{index,parentId:item.parentId,text:item.text};});
 }
 export function hasTerminalComment(rows,owner){return rows.some(row=>row.username===owner&&/^КАК ПРАВИЛЬНО ПОСТРОИТЬ СВОЙ МАРШРУТ/u.test(row.text)&&row.text.includes('Полные правила конкурса'));}
-export function completionEvidence({count,reportedCount,terminalCommentSeen,atBottom,stablePasses,pendingReplies=0,stopped=false,loginRequired=false}){
-  const reachedEnd=!!atBottom&&stablePasses>=4&&pendingReplies===0&&!stopped&&!loginRequired;
+export function completionEvidence({count,reportedCount,terminalCommentSeen,atBottom,stablePasses,pendingReplies=0,stopped=false,loginRequired=false,loading=false,hasNextPage=false}){
+  const reachedEnd=!!atBottom&&stablePasses>=4&&pendingReplies===0&&!stopped&&!loginRequired&&!loading&&!hasNextPage;
   const countMatches=Number.isInteger(reportedCount)&&count>=reportedCount;
   return{reachedEnd,terminalCommentSeen:!!terminalCommentSeen,countMatches,completeness:loginRequired||stopped||!reachedEnd||(Number.isInteger(reportedCount)&&!countMatches)?'partial':'unverified'};
 }

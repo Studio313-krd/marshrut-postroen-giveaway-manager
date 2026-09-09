@@ -10,6 +10,7 @@ import { InstagramCollector } from './collector.js';
 import { createAuth } from './auth.js';
 import { commentsWorkbook,readWorkbook } from './excel.js';
 import { createPrompt } from './prompt.js';
+import { collectedImport } from './collection-import.js';
 
 const root=resolve(fileURLToPath(new URL('..',import.meta.url)));
 if(existsSync(resolve(root,'.env')))process.loadEnvFile(resolve(root,'.env'));
@@ -35,7 +36,7 @@ function csv(rows) {return '\uFEFF'+rows.map(row=>row.map(value=>{let text=Strin
 function attach(res,text,type,name) {res.writeHead(200,{'Content-Type':type,'Content-Disposition':`attachment; filename="${name}"`,'Cache-Control':'no-store'});res.end(text);}
 function importInto(c, rows, source) {
   assert(!c.snapshot,'Список зафиксирован; импорт закрыт.',409);
-  const comments=normalizeComments(rows);
+  const imported=collectedImport(c.comments,rows,source);const comments=imported.comments;source=imported.source;
   if(digest(c.comments)===digest(comments))return;
   c.comments=comments;c.source={...source,count:c.comments.length};c.acknowledged=false;c.sourceAccepted=false;c.selectedComments=[];c.selection=null;c.overrides={};event(c,'comments_imported',{...c.source,hash:digest(c.comments)});save(c);
 }

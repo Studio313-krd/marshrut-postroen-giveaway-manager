@@ -36,6 +36,12 @@ test('end marker alone, short empty intervals, pending replies and count mismatc
   assert.equal(completionEvidence({count:333,reportedCount:333,atBottom:true,stablePasses:5,pendingReplies:1}).reachedEnd,false);
   const mismatch=completionEvidence({count:274,reportedCount:333,terminalCommentSeen:true,atBottom:true,stablePasses:5});assert.equal(mismatch.reachedEnd,true);assert.equal(mismatch.completeness,'partial');
   assert.equal(completionEvidence({count:333,reportedCount:333,atBottom:true,stablePasses:5,stopped:true}).completeness,'partial');
+  assert.equal(completionEvidence({count:30,reportedCount:335,atBottom:true,stablePasses:5,loading:true}).reachedEnd,false);
+  assert.equal(completionEvidence({count:30,reportedCount:335,atBottom:true,stablePasses:5,hasNextPage:true}).reachedEnd,false);
+});
+test('a visible Instagram spinner means the last loaded row is not the end',async()=>{
+  const browser=await chromium.launch({channel:'chrome',headless:true});
+  try{const page=await browser.newPage();await page.setContent('<base href="https://www.instagram.com/"><div style="height:200px;width:500px;overflow:auto"><div style="height:400px"><a href="/p/Dcv1u1Jo1QE/c/1/">Comment</a></div><div role="progressbar" style="height:32px">Loading</div></div>');let pane=await page.evaluate(inspectCommentPane,{code:'Dcv1u1Jo1QE',advance:true});assert.equal(pane.loading,true);await page.locator('[role=progressbar]').evaluate(el=>el.style.display='none');pane=await page.evaluate(inspectCommentPane,{code:'Dcv1u1Jo1QE',advance:true});assert.equal(pane.loading,false);}finally{await browser.close();}
 });
 test('reply expanders support numeric Russian and English labels, never Reply or Hide replies',async()=>{
   const browser=await chromium.launch({channel:'chrome',headless:true});
