@@ -1,6 +1,6 @@
 {
   "name": "marshrut-contests",
-  "version": "3.1.0",
+  "version": "3.2.0",
   "private": true,
   "type": "module",
   "description": "Конкурсы Маршрут-Построен — импорт Excel, проверка через ИИ и розыгрыши",
@@ -12,10 +12,13 @@
     "dev": "node --watch server/index.js",
     "test": "node --test tests/*.test.js",
     "test:ui": "node tests/workflow-browser.mjs",
+    "test:reels": "node tests/reels-browser.mjs",
     "verify": "node scripts/verify.mjs"
   },
   "dependencies": {
     "exceljs": "^4.4.0",
+    "jszip": "^3.10.1",
+    "saxes": "^5.0.1",
     "yauzl": "^3.4.0"
   },
   "overrides": {

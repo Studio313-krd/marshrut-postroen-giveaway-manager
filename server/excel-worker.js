@@ -1,7 +1,10 @@
 import ExcelJS from 'exceljs';
 import { parentPort,workerData } from 'node:worker_threads';
+import { compatibleWorkbook } from './excel-compat.js';
 try {
-  const book=new ExcelJS.Workbook();await book.xlsx.load(Buffer.from(workerData.buffer));
+  const book=new ExcelJS.Workbook();
+  try { await book.xlsx.load(await compatibleWorkbook(Buffer.from(workerData.buffer))); }
+  catch { throw new Error('Не удалось прочитать структуру Excel. Откройте файл в Excel или LibreOffice и сохраните заново в формате .xlsx.'); }
   if(workerData.mode==='source') {
     const plain=cell=>{const v=cell.value;if(v==null)return '';if(typeof v==='string')return v;if(v?.richText)return v.richText.map(x=>x.text).join('');if(v?.hyperlink&&typeof v.text==='string')return v.text;throw Error(`Ячейка ${cell.address}: аккаунт и комментарий должны быть текстом без формул.`);};
     const header=cell=>plain(cell).normalize('NFKC').trim().toLowerCase().replace(/[_\s]+/g,' ');

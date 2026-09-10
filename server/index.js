@@ -48,7 +48,7 @@ const server=http.createServer(async(req,res)=>{
     if(path==='/healthz')return json(res,{ok:true});
     if(path==='/robots.txt')return attach(res,'User-agent: *\nDisallow: /\n','text/plain','robots.txt');
     const session=auth.session(req);
-    if(path==='/api/session'&&req.method==='GET')return json(res,{authenticated:!!session,csrf:session?.csrf,username:session?.username,setupRequired:auth.setupRequired,version:'3.1.0'});
+    if(path==='/api/session'&&req.method==='GET')return json(res,{authenticated:!!session,csrf:session?.csrf,username:session?.username,setupRequired:auth.setupRequired,version:'3.2.0'});
     if(['/api/login','/api/setup'].includes(path)&&req.method==='POST') {assert(req.headers['content-type']?.startsWith('application/json'),'Нужен JSON.',415);const logged=await auth.login(req,res,await body(req),path==='/api/setup');return json(res,{authenticated:true,csrf:logged.csrf,username:'admin',setupRequired:false});}
     if(path.startsWith('/api/'))assert(session,'Войдите в аккаунт.',401);
     if(path.startsWith('/api/') && !['GET','HEAD'].includes(req.method)) assert(req.headers['x-csrf-token']===session.csrf,'Обновите страницу: сессия приложения изменилась.',403);

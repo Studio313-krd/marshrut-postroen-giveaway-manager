@@ -6,6 +6,7 @@ import { resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { digest, permutation } from '../server/domain.js';
 import { commentsWorkbook } from '../server/excel.js';
+import { openXmlWorkbook } from './helpers/openxml.js';
 
 test('HTTP import → review → freeze → idempotent draw → audit, restart and CSRF protection',async t=>{
   const dir=mkdtempSync(resolve('data','test-api-'));const port=14310;const base=`http://127.0.0.1:${port}`;let output='';
@@ -25,6 +26,21 @@ test('HTTP import → review → freeze → idempotent draw → audit, restart a
   const sourcePath='/contests/'+created.data.id+'/export/source.xlsx';const downloaded=await fetch(base+'/api'+sourcePath);assert.deepEqual(Buffer.from(await downloaded.arrayBuffer()),original);assert.match(downloaded.headers.get('content-disposition'),/filename\*=UTF-8/);
   assert.equal((await req('/contests/'+created.data.id+'/import','POST',{base64:'broken',filename:'broken.xlsx'})).status,400);
   assert.deepEqual(Buffer.from(await(await fetch(base+'/api'+sourcePath)).arrayBuffer()),original,'A rejected replacement must retain the original');
+  const selectionPath='/contests/'+created.data.id;
+  assert.equal((await req(selectionPath+'/prompt','POST',{conditions:'Любой комментарий; один шанс на аккаунт.'})).status,200);
+  const selectedRows=[{username:'alice',text:'Exact text\n❤️'}];
+  const selected=await openXmlWorkbook(selectedRows);
+  const accepted=await req(selectionPath+'/selection','POST',{base64:selected.toString('base64'),filename:'chatgpt.xlsx'});
+  assert.equal(accepted.status,200);assert.equal(accepted.data.selection.count,1);assert.equal(accepted.data.selectedComments[0].text,selectedRows[0].text);
+  for(const rows of [[{username:'alice',text:'Rewritten by AI'}],[...selectedRows,...selectedRows]]) {
+    const rejected=await req(selectionPath+'/selection','POST',{base64:(await openXmlWorkbook(rows)).toString('base64'),filename:'bad-selection.xlsx'});
+    assert.equal(rejected.status,400);
+    assert.deepEqual((await req(selectionPath)).data.selection,accepted.data.selection,'A rejected selection retains the accepted selection');
+  }
+  const namespacedSource=await openXmlWorkbook(selectedRows);
+  const prefixed=await req('/contests','POST',{base64:namespacedSource.toString('base64'),filename:'prefixed-source.xlsx'});
+  assert.equal(prefixed.status,201);
+  assert.deepEqual(Buffer.from(await(await fetch(base+'/api/contests/'+prefixed.data.id+'/export/source.xlsx')).arrayBuffer()),namespacedSource,'Namespace compatibility must not rewrite the archived upload');
   let {data:c}=await req('/demo','POST',{});const path='/contests/'+c.id;
   const source=await commentsWorkbook([{username:'alice',text:'hi'}]);
   const bad=await req(path+'/import','POST',{base64:source.toString('base64'),filename:'source.xlsx'});assert.equal(bad.status,200);assert.equal(bad.data.comments.length,1);
