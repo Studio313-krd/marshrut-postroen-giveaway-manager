@@ -9,35 +9,41 @@ import { randomUUID } from 'node:crypto';
 import { createDrawStore } from './store.mjs';
 import { createAuth } from './auth.mjs';
 import { networkSettings } from './runtime.mjs';
+import { createParticipantStore, parseText, MAX_EXCEL_BYTES, MAX_TEXT_BYTES } from './participants.mjs';
+import { parseExcel } from './excel.mjs';
 import { filmSettings, validateCounts } from '../shared/contest.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const port = Number(process.env.PORT || 5173);
 const production = process.argv.includes('--production');
 const network = networkSettings();
-const data = JSON.parse(await readFile(resolve(root, process.env.GIVEAWAY_PARTICIPANTS_FILE || 'data/participants.json'), 'utf8'));
+const participantsFile = resolve(root, process.env.GIVEAWAY_PARTICIPANTS_FILE || 'data/participants.json');
 const config = JSON.parse(await readFile(join(root, 'data/config.json'), 'utf8'));
 const stateDirectory = resolve(root, process.env.GIVEAWAY_STATE_DIR || '.local');
 const outputDirectory = resolve(root, process.env.GIVEAWAY_OUTPUT_DIR || 'output');
 const ffmpeg = process.env.FFMPEG_PATH || 'ffmpeg';
 const auth = await createAuth(stateDirectory, { secureCookies: network.secureCookies });
+const participantStore = await createParticipantStore({ file: participantsFile, directory: stateDirectory });
 const settingsFile = join(stateDirectory, 'settings.json');
-async function getSettings() {
+async function getSettings(data) {
   try {
     const saved = JSON.parse(await readFile(settingsFile, 'utf8'));
-    return validateCounts(saved.main, saved.reserve, data.participants.length);
-  } catch (error) { if (error.code === 'ENOENT') return { main: 5, reserve: 5 }; throw error; }
+    validateCounts(saved.main, saved.reserve, Number.MAX_SAFE_INTEGER);
+    const main = Math.min(saved.main, data.participants.length);
+    return { main, reserve: Math.min(saved.reserve, data.participants.length - main) };
+  } catch (error) { if (error.code === 'ENOENT') { const main = Math.min(5, data.participants.length); return { main, reserve: Math.min(5, data.participants.length - main) }; } throw error; }
 }
 const settingsKey = settings => `${settings.main}-${settings.reserve}`;
-const getStore = settings => createDrawStore({
+const getStore = (settings, data) => createDrawStore({
   directory: stateDirectory, ...data, ...filmSettings(settings.main, settings.reserve),
   fileKey: settings.main === 5 && settings.reserve === 5 ? '' : settingsKey(settings),
 });
-async function readJSON(req) {
+async function readBody(req, maximum) {
   const chunks = []; let size = 0;
-  for await (const chunk of req) { size += chunk.length; if (size > 8192) throw new Error('Request too large'); chunks.push(chunk); }
-  return JSON.parse(Buffer.concat(chunks).toString('utf8'));
+  for await (const chunk of req) { size += chunk.length; if (size > maximum) throw new Error('Файл или список слишком большой'); chunks.push(chunk); }
+  return Buffer.concat(chunks);
 }
+async function readJSON(req, maximum = 8192) { return JSON.parse((await readBody(req, maximum)).toString('utf8')); }
 await mkdir(outputDirectory, { recursive: true });
 const vite = production ? null : await (await import('vite')).createServer({
   root, server: { middlewareMode: true }, appType: 'spa',
@@ -95,7 +101,7 @@ async function serveFile(req, res, path, mime, download = false) {
 async function api(req, res, pathname) {
   if (req.method === 'GET' && pathname === '/api/health') {
     const ready = encoderReady && auth.ready;
-    json(res, { service: 'giveaway', version: '4.0.0', ready }, ready ? 200 : 503); return;
+    json(res, { service: 'giveaway', version: '4.1.0', ready }, ready ? 200 : 503); return;
   }
   if (req.method !== 'GET' && !network.allowsOrigin(req)) {
     json(res, { error: 'Запрос с другого сайта отклонён' }, 403); return;
@@ -111,9 +117,10 @@ async function api(req, res, pathname) {
   }
   if (!auth.session(req)) { json(res, { error: 'Войдите в аккаунт, чтобы продолжить' }, 401); return; }
   if (req.method === 'POST' && pathname === '/api/auth/logout') { auth.logout(req, res); json(res, { ok: true }); return; }
+  const data = participantStore.current();
   if (req.method === 'GET' && pathname === '/api/state') {
-    const settings = await getSettings();
-    const draw = await getStore(settings).read();
+    const settings = await getSettings(data);
+    const draw = await getStore(settings, data).read();
     const hasVideo = draw && await stat(join(outputDirectory, videoName(draw))).then(() => true, () => false);
     json(res, { ...data, settings, draw, encoderReady, renderVersion: config.renderVersion, videoUrl: hasVideo ? videoUrl(draw) : null });
     return;
@@ -121,6 +128,24 @@ async function api(req, res, pathname) {
   if (req.method !== 'POST') { json(res, { error: 'Not found' }, 404); return; }
   if (req.headers['x-film-version'] !== String(config.renderVersion)) {
     json(res, { error: 'Приложение обновлено — обновите страницу перед записью' }, 409); return;
+  }
+  if (pathname !== '/api/export' && req.headers['x-source-hash'] !== participantStore.current().sourceHash) {
+    json(res, { error: 'Список изменился — обновите страницу перед продолжением' }, 409); return;
+  }
+  if (pathname === '/api/participants/text' || pathname === '/api/participants/excel') {
+    try {
+      let next;
+      if (pathname.endsWith('/text')) {
+        const body = await readJSON(req, MAX_TEXT_BYTES + 1024);
+        next = parseText(body.text, body.isInstagram);
+      } else {
+        const filename = decodeURIComponent(req.headers['x-file-name'] || '');
+        next = await parseExcel(await readBody(req, MAX_EXCEL_BYTES), filename);
+      }
+      await participantStore.replace(next, req.headers['x-source-hash']);
+      json(res, { participants: next.participants.length, duplicates: next.duplicates });
+    } catch (error) { json(res, { error: error.message }, error.status || 400); }
+    return;
   }
   if (pathname === '/api/settings') {
     let settings;
@@ -133,18 +158,22 @@ async function api(req, res, pathname) {
     json(res, { settings }); return;
   }
   if (!encoderReady) { json(res, { error: 'Для сохранения MP4 установите FFmpeg и перезапустите приложение' }, 503); return; }
-  const settings = await getSettings();
+  const settings = await getSettings(data);
   if (pathname === '/api/draw') {
     if (req.headers['x-contest-key'] !== settingsKey(settings)) { json(res, { error: 'Настройки изменились — обновите страницу перед записью' }, 409); return; }
-    json(res, await getStore(settings).draw()); return;
+    json(res, await getStore(settings, data).draw()); return;
   }
   if (pathname !== '/api/export') { json(res, { error: 'Not found' }, 404); return; }
   const keyMatch = /^(\d+)-(\d+)$/.exec(req.headers['x-contest-key'] || '');
   if (!keyMatch) { json(res, { error: 'Не удалось прочитать настройки записи' }, 400); return; }
   let exportSettings;
-  try { exportSettings = validateCounts(Number(keyMatch[1]), Number(keyMatch[2]), data.participants.length); }
+  let exportData;
+  try {
+    exportData = await participantStore.read(req.headers['x-source-hash']);
+    exportSettings = validateCounts(Number(keyMatch[1]), Number(keyMatch[2]), exportData.participants.length);
+  }
   catch (error) { json(res, { error: error.message }, 400); return; }
-  const draw = await getStore(exportSettings).read();
+  const draw = await getStore(exportSettings, exportData).read();
   if (!draw || req.headers['x-draw-id'] !== draw.id) { json(res, { error: 'Результат розыгрыша не найден — обновите страницу' }, 409); return; }
   if (!/^video\/(webm|mp4)/.test(req.headers['content-type'] || '')) { json(res, { error: 'Неподдерживаемый формат записи' }, 415); return; }
   const chunks = [];

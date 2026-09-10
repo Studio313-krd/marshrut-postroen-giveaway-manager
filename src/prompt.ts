@@ -1,10 +1,15 @@
-export function buildPrompt(rules: string, filename: string): string {
+import type { AppState } from './types';
+
+export function buildPrompt(rules: string, filename: string, source?: AppState): string {
+  const countNote = source?.inputKind === 'text'
+    ? 'Посчитай все строки с комментариями и уникальные аккаунты в приложенной исходной выгрузке. Ручной список в сервисе не подтверждает полноту файла. Полноту выгрузки относительно Instagram проверяет менеджер.'
+    : `В списке из загруженного Excel ${source?.rows ?? source?.participants.length ?? 162} непустых строк аккаунтов и ${source?.participants.length ?? 162} уникальных аккаунтов. Полноту выгрузки относительно Instagram проверяет менеджер.`;
   return `Проверь приложенный Excel с комментариями к конкурсу. Используй инструменты анализа файлов и создай настоящий скачиваемый .xlsx.
 
 Исходный файл: "${filename}".
 Аккаунт организатора: @marshrut_postroen.media
 Менеджер прикладывает исходную выгрузку из GramLens, загруженную в сервис конкурса, без преобразования столбцов.
-Ожидается 162 строк с комментариями и 162 уникальных аккаунтов. Полноту выгрузки относительно Instagram проверяет менеджер.
+${countNote}
 
 УСЛОВИЯ КОНКУРСА (правила организатора):
 
@@ -53,14 +58,14 @@ export const helpersMarkup = `
         <li><span class="step-number">01</span><div><h3>Получите Excel через GramLens</h3><p>Установите расширение <a href="https://gramlens.com/ru" target="_blank" rel="noopener noreferrer">GramLens ↗</a> в браузер Chrome. Войдите в Instagram в этом браузере, откройте нужную публикацию и выгрузите все комментарии через расширение в Excel (.xlsx). Сохраните исходный файл без удаления строк, ответов и повторных аккаунтов.</p></div></li>
         <li><span class="step-number">02</span><div><h3>Запишите правила конкурса</h3><p>Откройте раздел «Промпт» и перечислите все условия — что написать в комментарии, кого отметить, разрешены ли повторные комментарии и что нужно проверить вручную</p></div></li>
         <li><span class="step-number">03</span><div><h3>Проверьте файл через ИИ</h3><p>Нажмите «Создать промпт», скопируйте текст и отправьте его вместе с исходным Excel в ChatGPT с поддержкой анализа файлов / Дождитесь готового Excel и отчёта по всем строкам</p></div></li>
-        <li><span class="step-number">04</span><div><h3>Сверьте список и отчёт</h3><p>Проверьте спорные случаи и причины исключений / В итоговом Excel должны остаться только «Аккаунт» и «Комментарий», каждый допущенный аккаунт — один раз / На этой странице используется уже подключённый проверенный список</p></div></li>
+        <li><span class="step-number">04</span><div><h3>Загрузите участников</h3><p>Сверьте отчёт и спорные случаи / Откройте «Участники» и загрузите проверенный Excel со столбцом «Аккаунт» или «Имя пользователя» в первой строке / Можно выбрать «Вставить список» и указать участников по одному в строке / Для обычных имён выключите «Это Instagram аккаунты» / Нажмите «Применить список»</p></div></li>
         <li><span class="step-number">05</span><div><h3>Настройте победителей и резерв</h3><p>Укажите количество основных мест / Если нужны резервные участники, включите «Нужен резерв» и задайте их число / Нажмите «Применить» — места в резерве идут после основных</p></div></li>
         <li><span class="step-number">06</span><div><h3>Запишите и проверьте результат</h3><p>Нажмите «Записать видео» и оставьте вкладку открытой / MP4 скачается автоматически, повторное скачивание сохранит те же места / Перед публикацией проверьте у предварительных победителей подписку, лайк и другие внешние условия — при необходимости используйте резерв по порядку мест</p></div></li>
       </ol>
     </section>
   </section>`;
 
-export function connectHelpers(filename: string) {
+export function connectHelpers(getSource: () => AppState) {
   for (const name of ['prompt', 'instruction']) {
     const toggle = document.querySelector<HTMLButtonElement>(`#${name}-toggle`)!;
     const panel = document.querySelector<HTMLElement>(`#${name}-panel`)!;
@@ -83,7 +88,8 @@ export function connectHelpers(filename: string) {
   document.querySelector('#prompt-form')!.addEventListener('submit', event => {
     event.preventDefault();
     if (!rules.value.trim()) { rules.setCustomValidity('Введите условия конкурса'); rules.reportValidity(); return; }
-    rules.setCustomValidity(''); output.value = buildPrompt(rules.value, filename);
+    const source = getSource();
+    rules.setCustomValidity(''); output.value = buildPrompt(rules.value, source.inputKind === 'text' ? 'Исходная выгрузка из GramLens' : source.sourceFile, source);
     document.querySelector<HTMLElement>('#prompt-result')!.hidden = false;
     status.textContent = '';
     output.scrollIntoView({ block: 'nearest', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth' });

@@ -2,7 +2,7 @@ import base from '../data/config.json' with { type: 'json' };
 
 export function validateCounts(main, reserve, available) {
   if (!Number.isInteger(main) || main < 1 || !Number.isInteger(reserve) || reserve < 0 || main + reserve > available) {
-    throw new Error(`Укажите целое число победителей от 1 и резервных от 0 / Всего можно выбрать не больше ${available} аккаунтов`);
+    throw new Error(`Укажите целое число победителей от 1 и резервных от 0 / Всего можно выбрать не больше ${available} участников`);
   }
   return { main, reserve };
 }

@@ -1,19 +1,22 @@
 {
   "name": "giveaway-reels",
-  "version": "4.0.0",
+  "version": "4.1.0",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "node server/index.mjs",
     "build": "tsc --noEmit && vite build",
     "start": "node server/index.mjs --production",
-    "test": "node --test tests/store.test.mjs tests/runtime.test.mjs",
+    "test": "node --test tests/store.test.mjs tests/runtime.test.mjs tests/participants.test.mjs",
     "test:browser": "node tests/browser.mjs"
   },
   "devDependencies": {
-    "@types/node": "^24.0.0",
     "@playwright/test": "^1.58.0",
+    "@types/node": "^24.0.0",
     "typescript": "^5.9.0",
     "vite": "^7.0.0"
+  },
+  "dependencies": {
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
   }
 }

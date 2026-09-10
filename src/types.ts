@@ -20,6 +20,10 @@ export type AppState = {
   participants: string[];
   sourceHash: string;
   sourceFile: string;
+  isInstagram: boolean;
+  inputKind: 'excel' | 'text';
+  rows?: number;
+  duplicates?: number;
   draw: Draw | null;
   encoderReady: boolean;
   videoUrl: string | null;

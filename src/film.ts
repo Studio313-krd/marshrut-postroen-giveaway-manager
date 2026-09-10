@@ -1,4 +1,5 @@
 import type { Draw, Winner } from './types';
+import { participantName } from '../shared/names.mjs';
 import { filmSettings, countLabel, plural, type FilmSettings } from '../shared/contest.mjs';
 
 export const FILM = filmSettings(5, 5);
@@ -30,7 +31,7 @@ export class FilmRenderer {
   private ctx: CanvasRenderingContext2D;
   private reels: string[][] = [];
   private draw: Draw | null = null;
-  constructor(readonly canvas: HTMLCanvasElement, readonly participants: string[], readonly settings: FilmSettings = FILM) {
+  constructor(readonly canvas: HTMLCanvasElement, readonly participants: string[], readonly settings: FilmSettings = FILM, readonly isInstagram = true) {
     canvas.width = this.settings.width;
     canvas.height = this.settings.height;
     const context = canvas.getContext('2d', { alpha: false });
@@ -113,7 +114,7 @@ export class FilmRenderer {
       for (let offset = -3; offset <= 3; offset++) {
         const index = nearest + offset;
         const normalized = ((index % accounts.length) + accounts.length) % accounts.length;
-        const name = '@' + accounts[normalized];
+        const name = participantName(accounts[normalized], this.isInstagram);
         const y = center + (index - position) * rowHeight;
         ctx.save();
         ctx.globalAlpha = selected ? 1 : Math.max(.12, 1 - Math.abs(y - center) / 260) * .52;
@@ -178,7 +179,7 @@ export class FilmRenderer {
         const reel = this.reels[index];
         const position = (reel.length - 1) * (1 - Math.pow(1 - progress, 3));
         this.drawReel(position, reel, 1110, true);
-        this.footer('БЕЗ ПОВТОРОВ / КАЖДЫЙ АККАУНТ — ОДНО МЕСТО');
+        this.footer(this.isInstagram ? 'БЕЗ ПОВТОРОВ / КАЖДЫЙ АККАУНТ — ОДНО МЕСТО' : 'БЕЗ ПОВТОРОВ / КАЖДЫЙ УЧАСТНИК — ОДНО МЕСТО');
         ctx.fillStyle = COLORS.accent; ctx.fillRect(88, 1408, 824 * progress, 4);
       } else {
         this.revealWinner(winner, elapsed - this.settings.revealDelay);
@@ -202,7 +203,7 @@ export class FilmRenderer {
     ctx.fillStyle = COLORS.canvas; ctx.fillRect(88, 939, 824, 290);
     if (!main) { ctx.fillStyle = COLORS.ink; ctx.fillRect(88, 939, 824, 290); }
     this.text(main ? 'ОСНОВНОЙ ПОБЕДИТЕЛЬ' : 'РЕЗЕРВНЫЙ УЧАСТНИК', 124, 1001, 24, main ? COLORS.accent : COLORS.canvas, 600);
-    const name = '@' + winner.account;
+    const name = participantName(winner.account, this.isInstagram);
     const size = name.length > 25 ? 42 : name.length > 20 ? 49 : name.length > 16 ? 57 : 69;
     this.text(name, 124, 1100, size, main ? COLORS.ink : COLORS.canvas, 700, 'Golos Text', 752);
     this.text(`МЕСТО ${winner.place}`, 124, 1170, 24, main ? COLORS.muted : COLORS.canvas);
@@ -244,7 +245,7 @@ export class FilmRenderer {
       } else this.line(88, y + 25, 824);
       const foreground = main ? COLORS.canvas : COLORS.ink;
       this.text(String(winner.place).padStart(2, '0'), 111, y, 28, foreground, 600);
-      const name = '@' + winner.account;
+      const name = participantName(winner.account, this.isInstagram);
       const size = name.length > 25 ? 31 : name.length > 21 ? 34 : 38;
       this.text(name, 187, y, size, foreground, 600, 'Golos Text', 699);
     }

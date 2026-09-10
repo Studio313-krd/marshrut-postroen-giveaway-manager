@@ -4,6 +4,8 @@ import { recordFilm, recordingType } from './record';
 import type { AppState, Draw } from './types';
 import { countLabel, filmSettings, timecode, validateCounts } from '../shared/contest.mjs';
 import { helpersMarkup, connectHelpers } from './prompt';
+import { participantsMarkup, connectParticipants } from './participants';
+import { participantName } from '../shared/names.mjs';
 
 for (const [name, color] of Object.entries(COLORS)) document.documentElement.style.setProperty(`--${name}`, color);
 
@@ -18,6 +20,7 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
       <p class="eyebrow">ПУСТЬ РЕШИТ СЛУЧАЙ</p>
       <h1 id="title">СЛУЧАЙ<br><span>РЕШАЕТ</span><span class="title-star">${star}</span></h1>
       <p class="description"><span id="participant-description">Участники из проверенного списка</span><br><span id="places-description">Настройте количество мест</span></p>
+      ${participantsMarkup}
       <form id="settings-form" class="settings-form">
         <div class="settings-heading"><span>НАСТРОЙКИ РОЗЫГРЫША</span><label class="reserve-switch"><input id="reserve-enabled" type="checkbox" checked /><span class="switch-track" aria-hidden="true"></span><span>Нужен резерв</span></label></div>
         <div class="count-inputs"><label for="main-count">Победители<input id="main-count" type="number" min="1" step="1" value="5" required inputmode="numeric" /></label><label for="reserve-count">Резерв<input id="reserve-count" type="number" min="0" step="1" value="5" required inputmode="numeric" /></label></div>
@@ -26,7 +29,7 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
       </form>
       <div id="results" class="results" hidden>
         <table aria-label="Результаты розыгрыша по местам">
-          <thead><tr><th scope="col">Место</th><th scope="col">Аккаунт</th><th scope="col">Статус</th></tr></thead>
+          <thead><tr><th scope="col">Место</th><th scope="col" id="participant-column">Аккаунт</th><th scope="col">Статус</th></tr></thead>
           <tbody id="result-rows"></tbody>
         </table>
       </div>
@@ -71,6 +74,8 @@ const reserveCount = $<HTMLInputElement>('#reserve-count');
 const reserveEnabled = $<HTMLInputElement>('#reserve-enabled');
 const applySettings = $<HTMLButtonElement>('#apply-settings');
 let applyingSettings = false;
+let importing = false;
+let participantEditor: ReturnType<typeof connectParticipants>;
 
 async function api<T>(url: string, options?: RequestInit): Promise<T> {
   let response: Response;
@@ -109,7 +114,7 @@ function showResult(draw: Draw) {
   for (const winner of draw.winners) {
     const row = document.createElement('tr');
     row.className = winner.kind;
-    for (const value of [String(winner.place).padStart(2, '0'), '@' + winner.account, winner.kind === 'main' ? 'Победитель' : 'Резерв']) {
+    for (const value of [String(winner.place).padStart(2, '0'), participantName(winner.account, state.isInstagram), winner.kind === 'main' ? 'Победитель' : 'Резерв']) {
       const cell = document.createElement('td'); cell.textContent = value; row.append(cell);
     }
     rows.append(row);
@@ -129,19 +134,21 @@ async function initialize() {
   state = await api<AppState>('/api/state');
   cancelAnimationFrame(posterAnimation);
   film = filmSettings(state.settings.main, state.settings.reserve);
-  renderer = new FilmRenderer(canvas, state.participants, film);
+  renderer = new FilmRenderer(canvas, state.participants, film, state.isInstagram);
   mainCount.value = String(state.settings.main); reserveCount.value = String(state.settings.reserve);
   mainCount.max = String(state.participants.length); reserveCount.max = String(state.participants.length - state.settings.main);
   reserveEnabled.checked = state.settings.reserve > 0; reserveCount.disabled = !reserveEnabled.checked;
   applySettings.disabled = true;
   $('#places-description').textContent = countLabel(state.settings.main, state.settings.reserve);
   $('#duration-note').textContent = `${timecode(film.duration)} / длительность`;
+  $('#rec-label').textContent = 'ПРЕДПРОСМОТР';
   $('#timecode').textContent = `00:00 / ${timecode(film.duration)}`;
   $('.timeline').setAttribute('aria-valuemax', String(film.duration));
   $('.timeline').setAttribute('aria-valuenow', '0'); $('#progress').style.width = '0';
   if (state.renderVersion !== FILM.renderVersion) throw new Error('Приложение обновлено — обновите страницу');
-  $('#participant-description').textContent = 'Участники из проверенного списка';
-  $('#source-note').textContent = 'Список из Excel проверен';
+  $('#participant-description').textContent = state.inputKind === 'text' ? 'Участники из вашего списка' : 'Участники из загруженного Excel';
+  $('#participant-column').textContent = state.isInstagram ? 'Аккаунт' : 'Участник';
+  $('#source-note').textContent = state.inputKind === 'text' ? 'Список введён вручную' : 'Список из Excel';
   if (state.draw) {
     showResult(state.draw);
     status.textContent = state.videoUrl
@@ -158,7 +165,8 @@ async function initialize() {
     if (!reducedMotion.matches) posterAnimation = requestAnimationFrame(animatePoster);
   }
   $('#settings-note').textContent = state.draw ? 'Для этого количества мест результат уже сохранён' : 'Изменение количества открывает отдельный розыгрыш';
-  if (!helpersReady) { connectHelpers(state.sourceFile); helpersReady = true; }
+  if (!helpersReady) { connectHelpers(() => state); helpersReady = true; }
+  participantEditor?.sync();
   if (!state.encoderReady) throw new Error('Для сохранения MP4 нужен FFmpeg — установите его и перезапустите приложение');
   if (!recordingType()) throw new Error('Откройте приложение в Chrome или Edge на компьютере, чтобы записать видео');
   ready = true; button.disabled = false;
@@ -177,8 +185,8 @@ function updateSettingsDraft() {
   reserveCount.max = String(Math.max(0, state.participants.length - main));
   reserveCount.disabled = !reserveEnabled.checked || busy;
   const changed = main !== state.settings.main || reserve !== state.settings.reserve;
-  applySettings.disabled = !changed || busy || applyingSettings;
-  button.disabled = changed || busy || applyingSettings;
+  applySettings.disabled = !changed || busy || applyingSettings || importing;
+  button.disabled = changed || busy || applyingSettings || importing;
   $('#settings-error').textContent = '';
   if (changed) $('#settings-note').textContent = 'Нажмите «Применить» / Предыдущие результаты сохранятся';
 }
@@ -193,30 +201,32 @@ reserveEnabled.addEventListener('change', () => {
   updateSettingsDraft();
 });
 $('#settings-form').addEventListener('submit', async event => {
-  event.preventDefault(); if (busy || applyingSettings) return;
+  event.preventDefault(); if (busy || applyingSettings || importing) return;
   try {
     const selected = validateCounts(Number(mainCount.value), reserveEnabled.checked ? Number(reserveCount.value) : 0, state.participants.length);
     applyingSettings = true; applySettings.disabled = true; button.disabled = true;
-    await api('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Film-Version': String(FILM.renderVersion) }, body: JSON.stringify(selected) });
+    participantEditor?.setDisabled(true);
+    await api('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Film-Version': String(FILM.renderVersion), 'X-Source-Hash': state.sourceHash }, body: JSON.stringify(selected) });
     await initialize();
     $('#settings-note').textContent = state.draw ? 'Для этого количества мест результат уже сохранён' : 'Настройки применены / Можно записывать';
   } catch (error) {
     $('#settings-error').textContent = error instanceof Error ? error.message : 'Не удалось сохранить настройки';
     applySettings.disabled = false;
-  } finally { applyingSettings = false; }
+  } finally { applyingSettings = false; participantEditor?.setDisabled(false); }
 });
 
 $('#logout').addEventListener('click', async () => {
-  if (busy) return;
+  if (busy || importing) return;
   try { await api('/api/auth/logout', { method: 'POST' }); location.reload(); }
   catch (error) { showError(error); }
 });
 
 button.addEventListener('click', async () => {
-  if (busy || applyingSettings) return;
+  if (busy || applyingSettings || importing) return;
   if (!ready) { initialize().catch(showError); return; }
   if (state.videoUrl) { download(state.videoUrl); status.textContent = 'Скачиваем сохранённый ролик — все места остаются прежними'; return; }
   busy = true; button.disabled = true;
+  participantEditor?.setDisabled(true);
   mainCount.disabled = true; reserveCount.disabled = true; reserveEnabled.disabled = true;
   $<HTMLButtonElement>('#logout').disabled = true;
   status.classList.remove('error');
@@ -224,7 +234,7 @@ button.addEventListener('click', async () => {
   $('#button-text').textContent = 'Готовим запись';
   status.textContent = 'Оставьте эту вкладку открытой до конца записи';
   try {
-    const draw = await api<Draw>('/api/draw', { method: 'POST', headers: { 'X-Film-Version': String(FILM.renderVersion), 'X-Contest-Key': `${state.settings.main}-${state.settings.reserve}` } });
+    const draw = await api<Draw>('/api/draw', { method: 'POST', headers: { 'X-Film-Version': String(FILM.renderVersion), 'X-Source-Hash': state.sourceHash, 'X-Contest-Key': `${state.settings.main}-${state.settings.reserve}` } });
     renderer.setDraw(draw);
     state.draw = draw;
     $('#button-text').textContent = 'Записываем видео';
@@ -246,7 +256,7 @@ button.addEventListener('click', async () => {
     $('#rec-label').textContent = 'СОХРАНЕНИЕ';
     status.textContent = 'Ролик записан — готовим файл для монтажа';
     const result = await api<{ videoUrl: string }>('/api/export', {
-      method: 'POST', headers: { 'Content-Type': video.type, 'X-Draw-Id': state.draw.id, 'X-Film-Version': String(FILM.renderVersion), 'X-Contest-Key': `${state.settings.main}-${state.settings.reserve}` }, body: video,
+      method: 'POST', headers: { 'Content-Type': video.type, 'X-Draw-Id': state.draw.id, 'X-Film-Version': String(FILM.renderVersion), 'X-Source-Hash': state.sourceHash, 'X-Contest-Key': `${state.settings.main}-${state.settings.reserve}` }, body: video,
     });
     state.videoUrl = result.videoUrl;
     download(state.videoUrl);
@@ -258,6 +268,7 @@ button.addEventListener('click', async () => {
     $('#rec-label').textContent = 'ПРЕДПРОСМОТР';
   } finally {
     busy = false; button.disabled = false;
+    participantEditor?.setDisabled(false);
     mainCount.disabled = false; reserveEnabled.disabled = false; reserveCount.disabled = !reserveEnabled.checked;
     $<HTMLButtonElement>('#logout').disabled = false;
     $('#button-text').textContent = 'Записать видео';
@@ -273,5 +284,24 @@ document.addEventListener('visibilitychange', () => {
 reducedMotion.addEventListener('change', () => {
   cancelAnimationFrame(posterAnimation);
   if (ready && !busy && !state.draw) { renderer.poster(); if (!reducedMotion.matches) posterAnimation = requestAnimationFrame(animatePoster); }
+});
+participantEditor = connectParticipants({
+  getState: () => state,
+  async submit(url, body, headers) {
+    if (!ready || busy || applyingSettings || importing) throw new Error('Дождитесь завершения текущего действия');
+    importing = true; button.disabled = true; applySettings.disabled = true;
+    mainCount.disabled = true; reserveCount.disabled = true; reserveEnabled.disabled = true;
+    $<HTMLButtonElement>('#logout').disabled = true;
+    try {
+      const result = await api<{ participants: number; duplicates: number }>(url, { method: 'POST', headers: { ...headers, 'X-Film-Version': String(FILM.renderVersion), 'X-Source-Hash': state.sourceHash }, body });
+      $('#prompt-result').hidden = true;
+      await initialize();
+      return result;
+    } finally {
+      importing = false; mainCount.disabled = false; reserveEnabled.disabled = false;
+      reserveCount.disabled = !reserveEnabled.checked; $<HTMLButtonElement>('#logout').disabled = false;
+      updateSettingsDraft();
+    }
+  },
 });
 initialize().catch(showError);
