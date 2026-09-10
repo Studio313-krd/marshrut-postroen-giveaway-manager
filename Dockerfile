@@ -1,7 +1,7 @@
 FROM node:24-bookworm-slim AS build
 WORKDIR /app
 COPY package.json package-lock.json ./
-RUN npm ci
+RUN npm ci --foreground-scripts --maxsockets=4 --fetch-timeout=60000 --fetch-retries=2 --fetch-retry-mintimeout=1000 --fetch-retry-maxtimeout=10000
 COPY tsconfig.json index.html ./
 COPY src ./src
 COPY shared ./shared
@@ -21,7 +21,7 @@ ENV NODE_ENV=production HOST=0.0.0.0 PORT=4310 \
     GIVEAWAY_PARTICIPANTS_FILE=/app/runtime/participants.json \
     GIVEAWAY_STATE_DIR=/app/runtime/state GIVEAWAY_OUTPUT_DIR=/app/runtime/output
 COPY package.json package-lock.json ./
-RUN npm ci --omit=dev && npm cache clean --force
+RUN npm ci --omit=dev --maxsockets=4 --fetch-timeout=60000 --fetch-retries=2 --fetch-retry-mintimeout=1000 --fetch-retry-maxtimeout=10000 && npm cache clean --force
 COPY --from=build /app/dist ./dist
 COPY server ./server
 COPY shared ./shared
