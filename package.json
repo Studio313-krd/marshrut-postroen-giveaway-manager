@@ -1,32 +1,19 @@
 {
-  "name": "marshrut-contests",
-  "version": "3.2.0",
+  "name": "giveaway-reels",
+  "version": "4.0.0",
   "private": true,
   "type": "module",
-  "description": "Конкурсы Маршрут-Построен — импорт Excel, проверка через ИИ и розыгрыши",
-  "engines": {
-    "node": ">=24.0.0"
-  },
   "scripts": {
-    "start": "node server/index.js",
-    "dev": "node --watch server/index.js",
-    "test": "node --test tests/*.test.js",
-    "test:ui": "node tests/workflow-browser.mjs",
-    "test:reels": "node tests/reels-browser.mjs",
-    "verify": "node scripts/verify.mjs"
-  },
-  "dependencies": {
-    "exceljs": "^4.4.0",
-    "jszip": "^3.10.1",
-    "saxes": "^5.0.1",
-    "yauzl": "^3.4.0"
-  },
-  "overrides": {
-    "exceljs": {
-      "uuid": "11.1.1"
-    }
+    "dev": "node server/index.mjs",
+    "build": "tsc --noEmit && vite build",
+    "start": "node server/index.mjs --production",
+    "test": "node --test tests/store.test.mjs tests/runtime.test.mjs",
+    "test:browser": "node tests/browser.mjs"
   },
   "devDependencies": {
-    "playwright": "^1.58.0"
+    "@types/node": "^24.0.0",
+    "@playwright/test": "^1.58.0",
+    "typescript": "^5.9.0",
+    "vite": "^7.0.0"
   }
 }

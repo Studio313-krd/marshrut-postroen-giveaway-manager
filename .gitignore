@@ -1,9 +1,13 @@
 node_modules/
-data/
+dist/
+.local/
+output/
 artifacts/
-reference-*
+reference.png
 *.log
+data/participants.json
 .env
 .env.*
 !.env.example
-deployment-private/
+.vscode/
+*.xlsx

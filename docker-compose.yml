@@ -1,18 +1,17 @@
 services:
   giveaway:
     build: .
-    image: marshrut-postroen-giveaway:latest
+    image: marshrut-postroen-giveaway:reels-v4
     pull_policy: build
     restart: unless-stopped
     init: true
+    stop_grace_period: 3m
     ports:
       - "9998:4310"
     environment:
       PUBLIC_URL: https://giveaway.marshrut-postroen.com
-      ADMIN_PASSWORD_HASH: ${ADMIN_PASSWORD_HASH:-}
-      SETUP_TOKEN: ${SETUP_TOKEN:-}
     volumes:
-      - giveaway-data:/app/data
+      - giveaway-reels-data:/app/runtime
     networks:
       proxy:
         aliases:
@@ -25,7 +24,9 @@ services:
         max-size: 10m
         max-file: "3"
 volumes:
-  giveaway-data:
+  giveaway-reels-data:
+    external: true
+    name: marshrut-giveaway_reels-data
 networks:
   proxy:
     external: true

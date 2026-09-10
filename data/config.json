@@ -1,0 +1,12 @@
+{
+  "width": 1080,
+  "height": 1920,
+  "fps": 30,
+  "duration": 45,
+  "renderVersion": 3,
+  "winnerCount": 10,
+  "mainWinnerCount": 5,
+  "spinStart": 3.8,
+  "slotDuration": 3.3,
+  "revealDelay": 1.1
+}
